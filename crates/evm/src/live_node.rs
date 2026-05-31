@@ -1896,7 +1896,7 @@ mod tests {
     /// reaches the same code path through the EVM's precompile dispatch.
     ///
     /// This test closes that gap. We deploy a 26-byte wrapper that forwards
-    /// its calldata to `OPENHL_DEPOSIT` via `CALL` and returns the precompile's
+    /// its calldata to `PRINCEPS_DEPOSIT` via `CALL` and returns the precompile's
     /// 32-byte response, then execute a transaction against it through the
     /// same `PrincepsEvmFactory` Reth wires into every block. The transaction
     /// succeeds, its return matches what the precompile produced, AND the
@@ -1916,7 +1916,7 @@ mod tests {
     #[ignore]
     fn deposit_via_evm_bytecode_mutates_bridge_accounts() {
         use crate::precompiles::{
-            uninstall_accounts, uninstall_clob, uninstall_fill_sink, OPENHL_DEPOSIT,
+            uninstall_accounts, uninstall_clob, uninstall_fill_sink, PRINCEPS_DEPOSIT,
         };
         use crate::PrincepsEvmFactory;
         use alloy_evm::revm::{
@@ -1951,7 +1951,7 @@ mod tests {
             AccountInfo {
                 nonce: 1,
                 code: Some(Bytecode::new_raw(Bytes::from(wrapper_bytecode_for(
-                    OPENHL_DEPOSIT,
+                    PRINCEPS_DEPOSIT,
                 )))),
                 ..Default::default()
             },
@@ -2011,7 +2011,7 @@ mod tests {
     }
 
     /// **Stage 17f companion**: same path as the deposit test, but
-    /// targeting `OPENHL_WITHDRAW`. Seeds collateral via the bridge's
+    /// targeting `PRINCEPS_WITHDRAW`. Seeds collateral via the bridge's
     /// own `deposit` (Rust API) so the EVM-side withdraw has something
     /// to drain — and asserts both the wrapper's return and the
     /// bridge's debited balance.
@@ -2022,7 +2022,7 @@ mod tests {
     #[ignore]
     fn withdraw_via_evm_bytecode_debits_bridge_accounts() {
         use crate::precompiles::{
-            uninstall_accounts, uninstall_clob, uninstall_fill_sink, OPENHL_WITHDRAW,
+            uninstall_accounts, uninstall_clob, uninstall_fill_sink, PRINCEPS_WITHDRAW,
         };
         use crate::PrincepsEvmFactory;
         use alloy_evm::revm::{
@@ -2052,7 +2052,7 @@ mod tests {
             AccountInfo {
                 nonce: 1,
                 code: Some(Bytecode::new_raw(Bytes::from(wrapper_bytecode_for(
-                    OPENHL_WITHDRAW,
+                    PRINCEPS_WITHDRAW,
                 )))),
                 ..Default::default()
             },
@@ -2184,7 +2184,7 @@ mod tests {
     fn deposit_via_evm_bytecode_rolls_back_on_revert() {
         use crate::precompiles::{
             uninstall_accounts, uninstall_clob, uninstall_fill_sink, PrincepsRevertGuard,
-            OPENHL_DEPOSIT,
+            PRINCEPS_DEPOSIT,
         };
         use crate::PrincepsEvmFactory;
         use alloy_evm::revm::{
@@ -2213,7 +2213,7 @@ mod tests {
             AccountInfo {
                 nonce: 1,
                 code: Some(Bytecode::new_raw(Bytes::from(
-                    reverting_wrapper_bytecode_for(OPENHL_DEPOSIT),
+                    reverting_wrapper_bytecode_for(PRINCEPS_DEPOSIT),
                 ))),
                 ..Default::default()
             },
@@ -2286,7 +2286,7 @@ mod tests {
     #[ignore]
     fn deposit_via_evm_bytecode_rolls_back_on_revert_through_create_evm() {
         use crate::precompiles::{
-            uninstall_accounts, uninstall_clob, uninstall_fill_sink, OPENHL_DEPOSIT,
+            uninstall_accounts, uninstall_clob, uninstall_fill_sink, PRINCEPS_DEPOSIT,
         };
         use crate::PrincepsEvmFactory;
         use alloy_evm::revm::{
@@ -2312,7 +2312,7 @@ mod tests {
             AccountInfo {
                 nonce: 1,
                 code: Some(Bytecode::new_raw(Bytes::from(
-                    reverting_wrapper_bytecode_for(OPENHL_DEPOSIT),
+                    reverting_wrapper_bytecode_for(PRINCEPS_DEPOSIT),
                 ))),
                 ..Default::default()
             },
@@ -2367,7 +2367,7 @@ mod tests {
     fn deposit_via_evm_bytecode_persists_on_return() {
         use crate::precompiles::{
             uninstall_accounts, uninstall_clob, uninstall_fill_sink, PrincepsRevertGuard,
-            OPENHL_DEPOSIT,
+            PRINCEPS_DEPOSIT,
         };
         use crate::PrincepsEvmFactory;
         use alloy_evm::revm::{
@@ -2394,7 +2394,7 @@ mod tests {
             AccountInfo {
                 nonce: 1,
                 code: Some(Bytecode::new_raw(Bytes::from(wrapper_bytecode_for(
-                    OPENHL_DEPOSIT,
+                    PRINCEPS_DEPOSIT,
                 )))),
                 ..Default::default()
             },

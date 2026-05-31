@@ -70,7 +70,7 @@ pub const CLOB_PLACE_ORDER: Address = address!("0x000000000000000000000000000000
 /// mutation lands in the bridge's account map regardless of whether
 /// the calling EVM transaction reverts. Tying mutations to the
 /// transaction's success is a future hardening item.
-pub const OPENHL_DEPOSIT: Address = address!("0x0000000000000000000000000000000000000c1d");
+pub const PRINCEPS_DEPOSIT: Address = address!("0x0000000000000000000000000000000000000c1d");
 
 /// Address of the "withdraw collateral" precompile (Stage 17e).
 ///
@@ -94,7 +94,7 @@ pub const OPENHL_DEPOSIT: Address = address!("0x00000000000000000000000000000000
 /// zeros. Same caveat as the other write precompiles: the
 /// withdrawal lands regardless of whether the calling EVM
 /// transaction reverts.
-pub const OPENHL_WITHDRAW: Address = address!("0x0000000000000000000000000000000000000c1e");
+pub const PRINCEPS_WITHDRAW: Address = address!("0x0000000000000000000000000000000000000c1e");
 
 /// The minimum gas charge for invoking a CLOB precompile. Tuned later.
 const CLOB_BASE_GAS_COST: u64 = 500;
@@ -589,12 +589,12 @@ pub fn princeps_precompiles(base: &Precompiles) -> Precompiles {
         ),
         Precompile::new(
             PrecompileId::custom("princeps_deposit"),
-            OPENHL_DEPOSIT,
+            PRINCEPS_DEPOSIT,
             deposit,
         ),
         Precompile::new(
             PrecompileId::custom("princeps_withdraw"),
-            OPENHL_WITHDRAW,
+            PRINCEPS_WITHDRAW,
             withdraw,
         ),
     ]);
