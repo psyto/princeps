@@ -50,24 +50,27 @@ Seven foundational decisions, locked for the platform lifecycle:
 
 ## Status
 
-Princeps inherits a working Reth + Malachite kernel from [openhl](https://github.com/psyto/openhl) — fully functional as of 2026-05-23. **283 tests pass across 8 crates.**
+Princeps inherits a working Reth + Malachite kernel from [openhl](https://github.com/psyto/openhl) — fully functional as of 2026-05-31. **286 tests pass across 11 crates.**
 
-**Built:**
+**Built (Stages 1–18a):**
 - ✅ Consensus substrate (Reth + Malachite, 4-message bridge)
+- ✅ Two-validator devnet with real follower replication via `ProposalAndParts`
 - ✅ CLOB pure state machine
-- ✅ Custom EVM precompiles (CLOB read + place_order + fill sink)
-- ✅ Funding state machine
-- ✅ Liquidation (margin math, insurance fund, multi-account scanner, ADL)
-- ✅ Oracle (median-of-medians + secp256k1-signed observations + publisher registry)
+- ✅ Custom EVM precompiles (CLOB read + `place_order` + fill sink + `deposit` + `withdraw`)
+- ✅ Funding state machine (per-block settlement applied to collateral)
+- ✅ Liquidation (margin math, insurance fund, multi-account scanner, ADL — full safety-net loop closed)
+- ✅ Oracle (median-of-medians + secp256k1-signed observations + publisher registry + cached aggregate persistence)
 - ✅ Vault primitive (share-based, ERC-4626-style)
-- ✅ Node coordinator + `reth-devnet` boot ceremony (persistent MDBX, validator key persistence, chain-spec loading, multi-validator scaffolding)
+- ✅ Clearing (`apply_fill` state machine, bridge-owned account map, persistent across restarts)
+- ✅ Node coordinator + `reth-devnet` boot ceremony (persistent MDBX, validator key persistence, chain-spec loading, per-block integration tick)
+- ✅ Margin-aware withdraw with revert-safe precompile mutations (`OpenHlRevertGuard`)
 
 **Next (v0 lending build):**
 - 🚧 Lending markets crate (collateral types, IRM, position health)
-- 🚧 Cross-margin engine (extending Stage 10a margin math)
+- 🚧 Cross-margin engine (multi-asset collateral)
 - 🚧 Single-asset-pair devnet (USDC / ETH)
-- 🚧 Sub-second deterministic liquidation demo
-- 🚧 Stage 13l: libp2p peer dialing for true multi-validator consensus
+- 🚧 Sub-second deterministic liquidation demo (productized over the existing scanner + ADL primitives)
+- 🚧 Multi-validator network expansion (3+ validators) building on Stage 18a follower replication
 
 ## Architecture
 
