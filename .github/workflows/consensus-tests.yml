@@ -19,7 +19,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       - name: Run stable consensus tests
-        run: cargo test -p openhl-consensus
+        run: cargo test -p princeps-consensus
 
   consensus-ignored-diagnostics:
     if: github.event_name == 'workflow_dispatch'
@@ -32,4 +32,4 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       - name: Run ignored consensus diagnostics
-        run: cargo test -p openhl-consensus -- --ignored --nocapture
+        run: cargo test -p princeps-consensus -- --ignored --nocapture

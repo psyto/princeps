@@ -5,7 +5,7 @@
 Run stable tests only:
 
 ```bash
-cargo test -p openhl-consensus
+cargo test -p princeps-consensus
 ```
 
 Some diagnostics are intentionally marked `#[ignore]` because they are
@@ -16,7 +16,7 @@ environment-sensitive (sandboxed socket permissions and actor scheduling).
 Run ignored diagnostics in a non-sandbox environment:
 
 ```bash
-cargo test -p openhl-consensus -- --ignored --nocapture
+cargo test -p princeps-consensus -- --ignored --nocapture
 ```
 
 Notable diagnostics:
@@ -25,14 +25,14 @@ Notable diagnostics:
 - `node::tests::start_engine_emits_initial_consensus_message`
 - `node::tests::start_engine_emits_listening_event`
 
-The Stage 17f Solidity-side precompile tests live in `openhl-evm` and
+The Stage 17f Solidity-side precompile tests live in `princeps-evm` and
 are ignored because they read from `precompiles::ACCOUNTS_STATE`, a
 process-global the bridge installs on construction — any other test
 that builds a `LiveRethEvmBridge` in parallel overwrites it. Run them
 single-threaded:
 
 ```bash
-cargo test -p openhl-evm via_evm_bytecode -- --ignored --test-threads=1
+cargo test -p princeps-evm via_evm_bytecode -- --ignored --test-threads=1
 ```
 
 - `live_node::tests::deposit_via_evm_bytecode_mutates_bridge_accounts`
@@ -42,7 +42,7 @@ cargo test -p openhl-evm via_evm_bytecode -- --ignored --test-threads=1
 
 ## Startup fail-fast behavior
 
-`OpenHlNode::start()` now waits for the first consensus app message by
+`PrincepsNode::start()` now waits for the first consensus app message by
 default. If none arrives within 5 seconds, startup fails with an error instead
 of returning a stalled handle.
 
@@ -56,7 +56,7 @@ node.without_startup_ready_check()
 
 Stage 13l wires `peer_multiaddr` entries from the `--validators` JSON
 into Malachite's `consensus.p2p.persistent_peers`. With this in place,
-two `openhl reth-devnet` instances on the same host can form a quorum.
+two `princeps reth-devnet` instances on the same host can form a quorum.
 
 ### Step 1 — generate two validator keys
 
@@ -66,8 +66,8 @@ flag; that writes a fresh `validator-key.json` under
 Stop both processes after the key is written (Ctrl-C is fine).
 
 ```bash
-openhl reth-devnet --moniker alice --data-dir /tmp/openhl-a --rounds 0
-openhl reth-devnet --moniker bob   --data-dir /tmp/openhl-b --rounds 0
+princeps reth-devnet --moniker alice --data-dir /tmp/princeps-a --rounds 0
+princeps reth-devnet --moniker bob   --data-dir /tmp/princeps-b --rounds 0
 ```
 
 ### Step 2 — write a shared `validators.json`
@@ -99,8 +99,8 @@ points at the shared validators file, and uses a non-default
 `--rpc-bind` so the two Reth RPCs don't collide:
 
 ```bash
-openhl reth-devnet \
-    --moniker alice --data-dir /tmp/openhl-a \
+princeps reth-devnet \
+    --moniker alice --data-dir /tmp/princeps-a \
     --validators /tmp/validators.json \
     --listen-addr /ip4/0.0.0.0/tcp/26656 \
     --rpc-bind 127.0.0.1:8545 \
@@ -108,8 +108,8 @@ openhl reth-devnet \
 ```
 
 ```bash
-openhl reth-devnet \
-    --moniker bob --data-dir /tmp/openhl-b \
+princeps reth-devnet \
+    --moniker bob --data-dir /tmp/princeps-b \
     --validators /tmp/validators.json \
     --listen-addr /ip4/0.0.0.0/tcp/26657 \
     --rpc-bind 127.0.0.1:8546 \
@@ -138,8 +138,8 @@ blocks and identical heads:
 
 ```bash
 diff \
-  <(jq -S '.chain | keys' /tmp/openhl-a/bridge/state.json) \
-  <(jq -S '.chain | keys' /tmp/openhl-b/bridge/state.json)
+  <(jq -S '.chain | keys' /tmp/princeps-a/bridge/state.json) \
+  <(jq -S '.chain | keys' /tmp/princeps-b/bridge/state.json)
 # no output → identical
 ```
 
