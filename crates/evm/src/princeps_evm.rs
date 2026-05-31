@@ -2,7 +2,7 @@
 //! filled with our custom-precompile EVM.
 //!
 //! Stage 9a (scout commit) — modelled on Reth's `examples/custom-evm/src/main.rs`
-//! pattern. The factory's `create_evm` installs `openhl_precompiles(...)` so
+//! pattern. The factory's `create_evm` installs `princeps_precompiles(...)` so
 //! any EVM execution path (RPC call, payload assembly, validation) sees the
 //! CLOB precompile registered at `CLOB_READ_BEST_BID`.
 //!
@@ -14,7 +14,7 @@
 //! built-in `Inspector for (L, R)` tuple impl. The guard snapshots
 //! the precompile globals (`{accounts, CLOB book, pending_fills}`)
 //! on each call-frame entry and restores on revert, so a contract
-//! that calls `openhl_deposit` and then `REVERT`s no longer mints
+//! that calls `princeps_deposit` and then `REVERT`s no longer mints
 //! collateral.
 //!
 //! The `inspect` flag on the constructed `EthEvm` is now `true`
@@ -45,7 +45,7 @@ use reth_node_api::{FullNodeTypes, NodeTypes};
 use reth_node_builder::{components::ExecutorBuilder, BuilderContext};
 use std::sync::OnceLock;
 
-use crate::precompiles::{openhl_precompiles, OpenHlRevertGuard};
+use crate::precompiles::{princeps_precompiles, OpenHlRevertGuard};
 
 /// EVM factory that registers openhl's custom precompiles on every EVM
 /// instance Reth constructs (for payload assembly, block validation, RPC
@@ -200,14 +200,14 @@ fn precompiles_for(spec: SpecId) -> &'static Precompiles {
 
     match spec {
         SpecId::PRAGUE | SpecId::OSAKA => {
-            PRAGUE.get_or_init(|| openhl_precompiles(Precompiles::prague()))
+            PRAGUE.get_or_init(|| princeps_precompiles(Precompiles::prague()))
         }
-        SpecId::CANCUN => CANCUN.get_or_init(|| openhl_precompiles(Precompiles::cancun())),
+        SpecId::CANCUN => CANCUN.get_or_init(|| princeps_precompiles(Precompiles::cancun())),
         // For older hardforks (Berlin/London/Paris/Shanghai), use the Berlin
         // set as the most-recent-additions-cutoff base plus ours.
         _ => FALLBACK.get_or_init(|| {
             let base = EthPrecompiles::new(spec).precompiles;
-            openhl_precompiles(base)
+            princeps_precompiles(base)
         }),
     }
 }

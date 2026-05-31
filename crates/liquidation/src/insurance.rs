@@ -14,7 +14,7 @@
 //! they can be re-evaluated lossless at any time. The insurance fund's
 //! balance, in contrast, accumulates effects from many liquidation events
 //! across many blocks; it is genuinely state. The shape mirrors
-//! `openhl_funding::clock` — a small state machine, owned by the bridge,
+//! `princeps_funding::clock` — a small state machine, owned by the bridge,
 //! mutated only on well-defined boundary events.
 //!
 //! ### Sign discipline

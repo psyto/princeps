@@ -12,15 +12,15 @@ name = "princeps"
 path = "src/main.rs"
 
 [dependencies]
-openhl-clearing    = { path = "../../crates/clearing" }
-openhl-clob        = { path = "../../crates/clob" }
-openhl-consensus   = { path = "../../crates/consensus" }
-openhl-evm         = { path = "../../crates/evm" }
-openhl-funding     = { path = "../../crates/funding" }
-openhl-liquidation = { path = "../../crates/liquidation" }
-openhl-node        = { path = "../../crates/node" }
-openhl-oracle      = { path = "../../crates/oracle" }
-openhl-types       = { path = "../../crates/types" }
+princeps-clearing    = { path = "../../crates/clearing" }
+princeps-clob        = { path = "../../crates/clob" }
+princeps-consensus   = { path = "../../crates/consensus" }
+princeps-evm         = { path = "../../crates/evm" }
+princeps-funding     = { path = "../../crates/funding" }
+princeps-liquidation = { path = "../../crates/liquidation" }
+princeps-node        = { path = "../../crates/node" }
+princeps-oracle      = { path = "../../crates/oracle" }
+princeps-types       = { path = "../../crates/types" }
 
 clap  = { version = "4.6", features = ["derive"] }
 eyre  = { workspace = true }

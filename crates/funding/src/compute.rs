@@ -100,7 +100,7 @@ fn saturate_i128_to_i64(v: i128) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openhl_clob::AccountId;
+    use princeps_clob::AccountId;
     use proptest::prelude::*;
 
     fn pos(account: u64, size: i64) -> Position {

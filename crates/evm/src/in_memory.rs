@@ -4,8 +4,8 @@
 //! real Reth-backed implementation lives in `engine.rs` (lands in Module 1 L10).
 
 use async_trait::async_trait;
-use openhl_consensus::bridge::{BridgeError, ConsensusBridge};
-use openhl_types::{BlockHash, ExecutedBlock, PayloadAttrs, PayloadId, PayloadStatus};
+use princeps_consensus::bridge::{BridgeError, ConsensusBridge};
+use princeps_types::{BlockHash, ExecutedBlock, PayloadAttrs, PayloadId, PayloadStatus};
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::Mutex;

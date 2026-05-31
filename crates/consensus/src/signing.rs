@@ -87,7 +87,7 @@ fn round_to_i64(r: Round) -> i64 {
 mod tests {
     use super::*;
     use crate::types::{OpenHlAddress, OpenHlHeight};
-    use openhl_types::BlockHash;
+    use princeps_types::BlockHash;
     use rand::rngs::OsRng;
 
     #[test]

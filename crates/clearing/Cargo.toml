@@ -1,5 +1,5 @@
 [package]
-name         = "openhl-clearing"
+name = "princeps-clearing"
 version      = { workspace = true }
 edition      = { workspace = true }
 rust-version = { workspace = true }
@@ -8,8 +8,8 @@ repository   = { workspace = true }
 authors      = { workspace = true }
 
 [dependencies]
-openhl-clob    = { path = "../clob" }
-openhl-funding = { path = "../funding" }
+princeps-clob    = { path = "../clob" }
+princeps-funding = { path = "../funding" }
 serde          = { workspace = true }
 
 [dev-dependencies]

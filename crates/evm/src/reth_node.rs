@@ -113,7 +113,7 @@ mod tests {
     /// Solidity contract); just validates the `EvmFactory` + `ExecutorBuilder`
     /// composition compiles, spawns, and tears down.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn reth_dev_node_with_openhl_executor() {
+    async fn reth_dev_node_with_princeps_executor() {
         let runtime = Runtime::test();
         let chain_spec = dev_chain_spec();
         let expected_chain_id = chain_spec.chain.id();

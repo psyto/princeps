@@ -1,5 +1,5 @@
 [package]
-name         = "openhl-oracle"
+name = "princeps-oracle"
 version      = { workspace = true }
 edition      = { workspace = true }
 rust-version = { workspace = true }
@@ -8,7 +8,7 @@ repository   = { workspace = true }
 authors      = { workspace = true }
 
 [dependencies]
-openhl-funding = { path = "../funding" }
+princeps-funding = { path = "../funding" }
 k256           = { version = "0.13", default-features = false, features = ["ecdsa", "std", "precomputed-tables"] }
 serde          = { workspace = true }
 

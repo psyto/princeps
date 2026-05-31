@@ -25,17 +25,17 @@ authors      = ["psyto <saito.hiroyuki@gmail.com>"]
 
 [workspace.dependencies]
 # --- Internal crates ---
-openhl-types       = { path = "crates/types" }
-openhl-codec       = { path = "crates/codec" }
-openhl-clob        = { path = "crates/clob" }
-openhl-oracle      = { path = "crates/oracle" }
-openhl-funding     = { path = "crates/funding" }
-openhl-liquidation = { path = "crates/liquidation" }
-openhl-vault       = { path = "crates/vault" }
-openhl-clearing    = { path = "crates/clearing" }
-openhl-evm         = { path = "crates/evm" }
-openhl-consensus   = { path = "crates/consensus" }
-openhl-node        = { path = "crates/node" }
+princeps-types       = { path = "crates/types" }
+princeps-codec       = { path = "crates/codec" }
+princeps-clob        = { path = "crates/clob" }
+princeps-oracle      = { path = "crates/oracle" }
+princeps-funding     = { path = "crates/funding" }
+princeps-liquidation = { path = "crates/liquidation" }
+princeps-vault       = { path = "crates/vault" }
+princeps-clearing    = { path = "crates/clearing" }
+princeps-evm         = { path = "crates/evm" }
+princeps-consensus   = { path = "crates/consensus" }
+princeps-node        = { path = "crates/node" }
 
 # --- Reth (pinned to v2.2.0 release tag) ---
 # Bump in a dedicated PR. Always pin to a release-tag SHA, never main HEAD.

@@ -19,7 +19,7 @@ use informalsystems_malachitebft_core_types::{
     Validity, Value as _, VotingPower,
 };
 use informalsystems_malachitebft_signing_ed25519::{PrivateKey, Signature};
-use openhl_types::{BlockHash, PayloadAttrs};
+use princeps_types::{BlockHash, PayloadAttrs};
 use rand::rngs::OsRng;
 use thiserror::Error;
 
@@ -343,7 +343,7 @@ fn address_from_public_key(
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use openhl_types::{ExecutedBlock, PayloadId, PayloadStatus};
+    use princeps_types::{ExecutedBlock, PayloadId, PayloadStatus};
     use std::sync::Mutex;
 
     #[derive(Debug, Default)]

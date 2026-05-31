@@ -33,11 +33,11 @@ use alloy_consensus::Header;
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_engine::ForkchoiceState;
 use async_trait::async_trait;
-use openhl_clearing::{apply_fill, Account};
-use openhl_clob::{AccountId, Book, Fill, FillResult, Order};
-use openhl_consensus::bridge::{BridgeError, ConsensusBridge};
-use openhl_funding::Notional;
-use openhl_types::{BlockHash, ExecutedBlock, PayloadAttrs, PayloadId, PayloadStatus};
+use princeps_clearing::{apply_fill, Account};
+use princeps_clob::{AccountId, Book, Fill, FillResult, Order};
+use princeps_consensus::bridge::{BridgeError, ConsensusBridge};
+use princeps_funding::Notional;
+use princeps_types::{BlockHash, ExecutedBlock, PayloadAttrs, PayloadId, PayloadStatus};
 use reth_chainspec::{ChainSpec, EthChainSpec};
 use reth_consensus::HeaderValidator;
 use reth_engine_primitives::ConsensusEngineHandle;
@@ -229,10 +229,10 @@ impl<P> LiveRethEvmBridge<P> {
     /// `amount` is signed; positive credits, negative debits.
     /// No balance check on debits — for safety-checked withdrawals
     /// use [`Self::withdraw`]. Overflow is `saturating_add`.
-    pub fn deposit(&self, account: AccountId, amount: i64) -> openhl_funding::Notional {
+    pub fn deposit(&self, account: AccountId, amount: i64) -> princeps_funding::Notional {
         let mut accts = self.accounts.lock().expect("accounts mutex poisoned");
         let acct = accts.entry(account).or_insert_with(|| Account::flat(account));
-        acct.collateral = openhl_funding::Notional(acct.collateral.0.saturating_add(amount));
+        acct.collateral = princeps_funding::Notional(acct.collateral.0.saturating_add(amount));
         acct.collateral
     }
 
@@ -262,7 +262,7 @@ impl<P> LiveRethEvmBridge<P> {
         &self,
         account: AccountId,
         amount: u64,
-    ) -> Option<openhl_funding::Notional> {
+    ) -> Option<princeps_funding::Notional> {
         let mark = self.current_mark();
         let mut accts = self.accounts.lock().expect("accounts mutex poisoned");
         let acct = accts.get_mut(&account)?;
@@ -271,7 +271,7 @@ impl<P> LiveRethEvmBridge<P> {
         if i128::from(amount_i64) > i128::from(free) {
             return None;
         }
-        acct.collateral = openhl_funding::Notional(acct.collateral.0 - amount_i64);
+        acct.collateral = princeps_funding::Notional(acct.collateral.0 - amount_i64);
         Some(acct.collateral)
     }
 
@@ -304,14 +304,14 @@ impl<P> LiveRethEvmBridge<P> {
     /// strictly CLOB-derived and must **not** be conflated with the
     /// oracle's aggregated index price.
     #[must_use]
-    pub fn current_mark(&self) -> Option<openhl_funding::MarkPrice> {
+    pub fn current_mark(&self) -> Option<princeps_funding::MarkPrice> {
         let book = self.clob.lock().expect("clob mutex poisoned");
         let bid = book.best_bid()?;
         let ask = book.best_ask()?;
         // Integer midpoint; rounds toward zero. With u64 prices this is
         // a saturating add but bid + ask can't overflow u64 in any
         // realistic deployment.
-        Some(openhl_funding::MarkPrice((bid.0 + ask.0) / 2))
+        Some(princeps_funding::MarkPrice((bid.0 + ask.0) / 2))
     }
 
     /// Snapshot of the bridge's committed-chain state (Stage 13g)
@@ -371,21 +371,21 @@ impl<P> LiveRethEvmBridge<P> {
 /// withdraw precompile, so on-chain and off-chain views of "how
 /// much can I take out" stay byte-identical.
 pub(crate) fn withdraw_free_collateral(
-    acct: &openhl_clearing::Account,
-    mark: Option<openhl_funding::MarkPrice>,
+    acct: &princeps_clearing::Account,
+    mark: Option<princeps_funding::MarkPrice>,
 ) -> i64 {
     match mark {
-        Some(m) => openhl_clearing::free_collateral(
+        Some(m) => princeps_clearing::free_collateral(
             acct,
             m,
-            openhl_clearing::DEFAULT_INITIAL_MARGIN_BPS,
+            princeps_clearing::DEFAULT_INITIAL_MARGIN_BPS,
         ),
         None => {
             // Stage 17g fallback: no mark → IM at avg_entry, uPnL
             // treated as zero. Equivalent to `collateral − IM_req`.
-            let im = openhl_clearing::initial_margin_requirement(
+            let im = princeps_clearing::initial_margin_requirement(
                 acct,
-                openhl_clearing::DEFAULT_INITIAL_MARGIN_BPS,
+                princeps_clearing::DEFAULT_INITIAL_MARGIN_BPS,
             );
             acct.collateral.0.saturating_sub(im)
         }
@@ -757,14 +757,14 @@ mod tests {
 
     /// Stage 14c: `current_mark()` is empty until both sides of the book
     /// have resting liquidity, then returns the midpoint as a
-    /// [`openhl_funding::MarkPrice`]. Uses `()` as the provider since the
+    /// [`princeps_funding::MarkPrice`]. Uses `()` as the provider since the
     /// method only reads from the bridge's `clob` and never touches the
     /// provider — the trait bound on `ConsensusBridge` doesn't apply to
     /// inherent methods.
     #[test]
     fn current_mark_midpoint_of_two_sided_book() {
-        use openhl_clob::{AccountId, OrderId, OrderType, Price, Qty, Side};
-        use openhl_funding::MarkPrice;
+        use princeps_clob::{AccountId, OrderId, OrderType, Price, Qty, Side};
+        use princeps_funding::MarkPrice;
 
         let bridge = LiveRethEvmBridge::new((), dev_chain_spec());
 
@@ -797,8 +797,8 @@ mod tests {
     /// the correct position direction.
     #[test]
     fn submit_order_routes_fills_through_apply_fill() {
-        use openhl_clob::{AccountId, OrderId, OrderType, Price, Qty, Side};
-        use openhl_funding::{MarkPrice, Notional, PositionSize};
+        use princeps_clob::{AccountId, OrderId, OrderType, Price, Qty, Side};
+        use princeps_funding::{MarkPrice, Notional, PositionSize};
 
         let bridge = LiveRethEvmBridge::new((), dev_chain_spec());
 
@@ -848,8 +848,8 @@ mod tests {
     /// missing.
     #[test]
     fn deposit_creates_flat_account_and_credits_collateral() {
-        use openhl_clob::AccountId;
-        use openhl_funding::{Notional, PositionSize};
+        use princeps_clob::AccountId;
+        use princeps_funding::{Notional, PositionSize};
 
         let bridge = LiveRethEvmBridge::new((), dev_chain_spec());
 
@@ -877,8 +877,8 @@ mod tests {
     /// and insufficient balance; debits on success.
     #[test]
     fn withdraw_rejects_or_debits_correctly() {
-        use openhl_clob::AccountId;
-        use openhl_funding::Notional;
+        use princeps_clob::AccountId;
+        use princeps_funding::Notional;
 
         let bridge = LiveRethEvmBridge::new((), dev_chain_spec());
 
@@ -904,8 +904,8 @@ mod tests {
     /// accounts.
     #[test]
     fn withdraw_respects_initial_margin_for_open_position() {
-        use openhl_clob::{AccountId, OrderId, OrderType, Price, Qty, Side};
-        use openhl_funding::Notional;
+        use princeps_clob::{AccountId, OrderId, OrderType, Price, Qty, Side};
+        use princeps_funding::Notional;
 
         let bridge = LiveRethEvmBridge::new((), dev_chain_spec());
 
@@ -950,8 +950,8 @@ mod tests {
     /// withdraw against its unrealized gains.
     #[test]
     fn withdraw_uses_mark_aware_free_collateral_at_gain() {
-        use openhl_clob::{AccountId, OrderId, OrderType, Price, Qty, Side};
-        use openhl_funding::Notional;
+        use princeps_clob::{AccountId, OrderId, OrderType, Price, Qty, Side};
+        use princeps_funding::Notional;
 
         let bridge = LiveRethEvmBridge::new((), dev_chain_spec());
 
@@ -1010,8 +1010,8 @@ mod tests {
     /// than `collateral − IM_at_avg_entry`).
     #[test]
     fn withdraw_uses_mark_aware_free_collateral_at_loss() {
-        use openhl_clob::{AccountId, OrderId, OrderType, Price, Qty, Side};
-        use openhl_funding::Notional;
+        use princeps_clob::{AccountId, OrderId, OrderType, Price, Qty, Side};
+        use princeps_funding::Notional;
 
         let bridge = LiveRethEvmBridge::new((), dev_chain_spec());
 
@@ -1062,7 +1062,7 @@ mod tests {
     /// Stage 16b: bridge snapshot round-trips the account map.
     #[test]
     fn snapshot_round_trips_accounts() {
-        use openhl_clob::{AccountId, OrderId, OrderType, Price, Qty, Side};
+        use princeps_clob::{AccountId, OrderId, OrderType, Price, Qty, Side};
 
         let bridge = LiveRethEvmBridge::new((), dev_chain_spec());
         bridge.submit_order(Order {
@@ -1175,7 +1175,7 @@ mod tests {
     /// AFTER they're built, not retroactively included.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn clob_fills_flow_into_payload() {
-        use openhl_clob::{AccountId, OrderId, OrderType, Price, Qty, Side};
+        use princeps_clob::{AccountId, OrderId, OrderType, Price, Qty, Side};
 
         let runtime = Runtime::test();
         let chain_spec = dev_chain_spec();
@@ -1284,7 +1284,7 @@ mod tests {
         use crate::precompiles::{
             CLOB_PLACE_ORDER, current_best_bid, uninstall_clob, uninstall_fill_sink,
         };
-        use openhl_clob::{AccountId, OrderId, OrderType, Price, Qty, Side};
+        use princeps_clob::{AccountId, OrderId, OrderType, Price, Qty, Side};
         use reth_node_ethereum::node::EthereumAddOns;
 
         // Start from a clean global state — other tests may have left a CLOB
@@ -1368,7 +1368,7 @@ mod tests {
         );
 
         // CLOB_PLACE_ORDER's address constant is part of the public surface
-        // (and registered into the precompiles set by `openhl_precompiles`);
+        // (and registered into the precompiles set by `princeps_precompiles`);
         // touch it here so the import resolves and the constant stays load-bearing.
         let _ = CLOB_PLACE_ORDER;
 
@@ -1382,7 +1382,7 @@ mod tests {
     }
 
     /// **Stage 17d**: mirror of the CLOB precompile test above, but for
-    /// `openhl_deposit`. Proves the load-bearing wiring:
+    /// `princeps_deposit`. Proves the load-bearing wiring:
     ///
     ///   1. `LiveRethEvmBridge::new` calls
     ///      `precompiles::install_accounts(Arc::clone(&accounts))`,
@@ -1403,8 +1403,8 @@ mod tests {
     async fn deposit_precompile_mutates_bridge_accounts() {
         use crate::precompiles::{deposit, uninstall_accounts, uninstall_clob, uninstall_fill_sink};
         use crate::OpenHlExecutorBuilder;
-        use openhl_clob::AccountId;
-        use openhl_funding::Notional;
+        use princeps_clob::AccountId;
+        use princeps_funding::Notional;
         use reth_node_ethereum::node::EthereumAddOns;
 
         // Start from a clean global state — earlier tests may have
@@ -1480,8 +1480,8 @@ mod tests {
             deposit, uninstall_accounts, uninstall_clob, uninstall_fill_sink, withdraw,
         };
         use crate::OpenHlExecutorBuilder;
-        use openhl_clob::AccountId;
-        use openhl_funding::Notional;
+        use princeps_clob::AccountId;
+        use princeps_funding::Notional;
         use reth_node_ethereum::node::EthereumAddOns;
 
         uninstall_accounts();
@@ -1559,7 +1559,7 @@ mod tests {
     /// same `OpenHlEvmFactory` Reth wires into every block. The transaction
     /// succeeds, its return matches what the precompile produced, AND the
     /// bridge's account map carries the credit — proving the bytecode →
-    /// `CALL` → `openhl_precompiles` dispatch → state mutation path is whole.
+    /// `CALL` → `princeps_precompiles` dispatch → state mutation path is whole.
     ///
     /// We don't boot a Reth node here: the precompile registration is in
     /// the factory, the account-map handoff is in `LiveRethEvmBridge::new`,
@@ -1584,8 +1584,8 @@ mod tests {
             state::{AccountInfo, Bytecode},
         };
         use alloy_evm::{Evm, EvmEnv, EvmFactory};
-        use openhl_clob::AccountId;
-        use openhl_funding::Notional;
+        use princeps_clob::AccountId;
+        use princeps_funding::Notional;
 
         uninstall_accounts();
         uninstall_clob();
@@ -1690,8 +1690,8 @@ mod tests {
             state::{AccountInfo, Bytecode},
         };
         use alloy_evm::{Evm, EvmEnv, EvmFactory};
-        use openhl_clob::AccountId;
-        use openhl_funding::Notional;
+        use princeps_clob::AccountId;
+        use princeps_funding::Notional;
 
         uninstall_accounts();
         uninstall_clob();
@@ -2035,8 +2035,8 @@ mod tests {
             state::{AccountInfo, Bytecode},
         };
         use alloy_evm::{Evm, EvmEnv, EvmFactory};
-        use openhl_clob::AccountId;
-        use openhl_funding::Notional;
+        use princeps_clob::AccountId;
+        use princeps_funding::Notional;
 
         uninstall_accounts();
         uninstall_clob();

@@ -14,10 +14,10 @@
 //! same number from the same inputs), robust to single-feed manipulation
 //! (one bad publisher shouldn't move the index), and bounded against
 //! stale data (a feed that hasn't updated in N seconds is dropped). The
-//! result is what `openhl_funding::compute_premium` consumes against the
+//! result is what `princeps_funding::compute_premium` consumes against the
 //! CLOB-derived mark price to compute the per-interval funding rate.
 
-use openhl_funding::IndexPrice;
+use princeps_funding::IndexPrice;
 use serde::{Deserialize, Serialize};
 
 /// Bps scale factor. 1 bp = 0.01%; `DEVIATION_SCALE` = 10⁴ means

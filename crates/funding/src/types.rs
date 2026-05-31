@@ -13,7 +13,7 @@
 //! integers scaled by [`RATE_SCALE`] (parts-per-billion) for rates and
 //! premiums, and a separate `Notional` type for quote-currency deltas.
 
-use openhl_clob::AccountId;
+use princeps_clob::AccountId;
 use serde::{Deserialize, Serialize};
 
 /// Scale factor for [`FundingRate`] and [`Premium`]. A raw value of

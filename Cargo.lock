@@ -6206,188 +6206,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
-name = "openhl"
-version = "0.1.0"
-dependencies = [
- "alloy-genesis",
- "alloy-primitives",
- "clap",
- "ed25519-consensus",
- "eyre",
- "hex",
- "informalsystems-malachitebft-app",
- "informalsystems-malachitebft-signing-ed25519",
- "k256",
- "openhl-clearing",
- "openhl-clob",
- "openhl-consensus",
- "openhl-evm",
- "openhl-funding",
- "openhl-liquidation",
- "openhl-node",
- "openhl-oracle",
- "openhl-types",
- "rand 0.8.6",
- "reth-chainspec",
- "reth-db",
- "reth-node-builder",
- "reth-node-core",
- "reth-node-ethereum",
- "reth-tasks",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber 0.3.23",
-]
-
-[[package]]
-name = "openhl-clearing"
-version = "0.1.0"
-dependencies = [
- "openhl-clob",
- "openhl-funding",
- "proptest",
- "serde",
-]
-
-[[package]]
-name = "openhl-clob"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "serde",
-]
-
-[[package]]
-name = "openhl-codec"
-version = "0.1.0"
-
-[[package]]
-name = "openhl-consensus"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "bytes",
- "eyre",
- "informalsystems-malachitebft-app",
- "informalsystems-malachitebft-app-channel",
- "informalsystems-malachitebft-config",
- "informalsystems-malachitebft-core-consensus",
- "informalsystems-malachitebft-core-driver",
- "informalsystems-malachitebft-core-types",
- "informalsystems-malachitebft-engine",
- "informalsystems-malachitebft-signing-ed25519",
- "informalsystems-malachitebft-sync",
- "openhl-types",
- "rand 0.8.6",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "openhl-evm"
-version = "0.1.0"
-dependencies = [
- "alloy-consensus",
- "alloy-evm",
- "alloy-genesis",
- "alloy-primitives",
- "alloy-rpc-types-engine",
- "async-trait",
- "eyre",
- "openhl-clearing",
- "openhl-clob",
- "openhl-consensus",
- "openhl-funding",
- "openhl-types",
- "reth-chainspec",
- "reth-consensus",
- "reth-engine-primitives",
- "reth-ethereum-consensus",
- "reth-ethereum-engine-primitives",
- "reth-ethereum-primitives",
- "reth-evm",
- "reth-evm-ethereum",
- "reth-node-api",
- "reth-node-builder",
- "reth-node-core",
- "reth-node-ethereum",
- "reth-primitives-traits",
- "reth-provider",
- "reth-storage-api",
- "reth-tasks",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "openhl-funding"
-version = "0.1.0"
-dependencies = [
- "openhl-clob",
- "proptest",
- "serde",
-]
-
-[[package]]
-name = "openhl-liquidation"
-version = "0.1.0"
-dependencies = [
- "openhl-clob",
- "openhl-funding",
- "proptest",
- "serde",
-]
-
-[[package]]
-name = "openhl-node"
-version = "0.1.0"
-dependencies = [
- "openhl-clob",
- "openhl-funding",
- "openhl-liquidation",
- "openhl-oracle",
- "openhl-vault",
- "proptest",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "openhl-oracle"
-version = "0.1.0"
-dependencies = [
- "k256",
- "openhl-funding",
- "proptest",
- "serde",
-]
-
-[[package]]
-name = "openhl-types"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "openhl-vault"
-version = "0.1.0"
-dependencies = [
- "proptest",
-]
-
-[[package]]
 name = "openssl-probe"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6825,6 +6643,188 @@ dependencies = [
  "fixed-hash",
  "impl-codec",
  "uint 0.9.5",
+]
+
+[[package]]
+name = "princeps"
+version = "0.1.0"
+dependencies = [
+ "alloy-genesis",
+ "alloy-primitives",
+ "clap",
+ "ed25519-consensus",
+ "eyre",
+ "hex",
+ "informalsystems-malachitebft-app",
+ "informalsystems-malachitebft-signing-ed25519",
+ "k256",
+ "princeps-clearing",
+ "princeps-clob",
+ "princeps-consensus",
+ "princeps-evm",
+ "princeps-funding",
+ "princeps-liquidation",
+ "princeps-node",
+ "princeps-oracle",
+ "princeps-types",
+ "rand 0.8.6",
+ "reth-chainspec",
+ "reth-db",
+ "reth-node-builder",
+ "reth-node-core",
+ "reth-node-ethereum",
+ "reth-tasks",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.23",
+]
+
+[[package]]
+name = "princeps-clearing"
+version = "0.1.0"
+dependencies = [
+ "princeps-clob",
+ "princeps-funding",
+ "proptest",
+ "serde",
+]
+
+[[package]]
+name = "princeps-clob"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde",
+]
+
+[[package]]
+name = "princeps-codec"
+version = "0.1.0"
+
+[[package]]
+name = "princeps-consensus"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "eyre",
+ "informalsystems-malachitebft-app",
+ "informalsystems-malachitebft-app-channel",
+ "informalsystems-malachitebft-config",
+ "informalsystems-malachitebft-core-consensus",
+ "informalsystems-malachitebft-core-driver",
+ "informalsystems-malachitebft-core-types",
+ "informalsystems-malachitebft-engine",
+ "informalsystems-malachitebft-signing-ed25519",
+ "informalsystems-malachitebft-sync",
+ "princeps-types",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "princeps-evm"
+version = "0.1.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-evm",
+ "alloy-genesis",
+ "alloy-primitives",
+ "alloy-rpc-types-engine",
+ "async-trait",
+ "eyre",
+ "princeps-clearing",
+ "princeps-clob",
+ "princeps-consensus",
+ "princeps-funding",
+ "princeps-types",
+ "reth-chainspec",
+ "reth-consensus",
+ "reth-engine-primitives",
+ "reth-ethereum-consensus",
+ "reth-ethereum-engine-primitives",
+ "reth-ethereum-primitives",
+ "reth-evm",
+ "reth-evm-ethereum",
+ "reth-node-api",
+ "reth-node-builder",
+ "reth-node-core",
+ "reth-node-ethereum",
+ "reth-primitives-traits",
+ "reth-provider",
+ "reth-storage-api",
+ "reth-tasks",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "princeps-funding"
+version = "0.1.0"
+dependencies = [
+ "princeps-clob",
+ "proptest",
+ "serde",
+]
+
+[[package]]
+name = "princeps-liquidation"
+version = "0.1.0"
+dependencies = [
+ "princeps-clob",
+ "princeps-funding",
+ "proptest",
+ "serde",
+]
+
+[[package]]
+name = "princeps-node"
+version = "0.1.0"
+dependencies = [
+ "princeps-clob",
+ "princeps-funding",
+ "princeps-liquidation",
+ "princeps-oracle",
+ "princeps-vault",
+ "proptest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "princeps-oracle"
+version = "0.1.0"
+dependencies = [
+ "k256",
+ "princeps-funding",
+ "proptest",
+ "serde",
+]
+
+[[package]]
+name = "princeps-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "princeps-vault"
+version = "0.1.0"
+dependencies = [
+ "proptest",
 ]
 
 [[package]]

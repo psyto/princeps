@@ -13,9 +13,9 @@
 //! stale and zero-price observations at ingestion, then once per block
 //! drops feeds that deviate too far from the median (single-feed
 //! manipulation defense) and computes the median over the survivors.
-//! The result is the trusted [`IndexPrice`](openhl_funding::IndexPrice)
-//! that `openhl_funding` consumes against the CLOB mark to compute
-//! funding rates, and that `openhl_liquidation` could optionally use
+//! The result is the trusted [`IndexPrice`](princeps_funding::IndexPrice)
+//! that `princeps_funding` consumes against the CLOB mark to compute
+//! funding rates, and that `princeps_liquidation` could optionally use
 //! for cross-checking the CLOB's mark in stress scenarios.
 //!
 //! ### Stage 11 scope

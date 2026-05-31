@@ -35,7 +35,7 @@ use informalsystems_malachitebft_app::types::{PeerId, ProposedValue};
 use informalsystems_malachitebft_app_channel::{AppMsg, Channels, NetworkMsg};
 use informalsystems_malachitebft_core_types::{Height as _, Round, Validity};
 use informalsystems_malachitebft_engine::util::streaming::StreamContent;
-use openhl_types::{BlockHash, PayloadAttrs};
+use princeps_types::{BlockHash, PayloadAttrs};
 
 use crate::bridge::ConsensusBridge;
 use crate::context::OpenHlContext;
@@ -385,7 +385,7 @@ mod tests {
     use informalsystems_malachitebft_app_channel::{AppMsg, Channels};
     use informalsystems_malachitebft_core_types::{CommitCertificate, Round, VoteExtensions};
     use informalsystems_malachitebft_signing_ed25519::PrivateKey;
-    use openhl_types::{ExecutedBlock, PayloadAttrs, PayloadId, PayloadStatus};
+    use princeps_types::{ExecutedBlock, PayloadAttrs, PayloadId, PayloadStatus};
     use rand::rngs::OsRng;
     use sha2::{Digest, Sha256};
     use std::sync::{Arc as StdArc, Mutex};

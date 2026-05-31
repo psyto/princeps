@@ -21,7 +21,7 @@
 //! The tick then:
 //!   1. **Refreshes the oracle** (if the configured interval has
 //!      elapsed since the last refresh). Stale-feed filter + median
-//!      + deviation guard from `openhl_oracle`.
+//!      + deviation guard from `princeps_oracle`.
 //!   2. **Scans for liquidations** using [`LiquidationScanner::scan`].
 //!      Liquidatable / Underwater accounts produce close orders and
 //!      mutate the insurance fund.
@@ -61,16 +61,16 @@
 //! keeps each layer independently testable. The `bin/openhl` binary
 //! will own wiring of these two layers together.
 
-use openhl_funding::{FundingClock, FundingParams, FundingTick, MarkPrice, Position};
-use openhl_liquidation::{
+use princeps_funding::{FundingClock, FundingParams, FundingTick, MarkPrice, Position};
+use princeps_liquidation::{
     execute_adl, AccountSnapshot, AdlReport, InsuranceFund, LiquidationParams,
     LiquidationScanner, ScanReport,
 };
-use openhl_oracle::{
+use princeps_oracle::{
     AggregatedPrice, AggregationError, FeedId, ObservationError, OracleParams, OracleState,
     PriceObservation, PublisherKey,
 };
-use openhl_vault::{VaultParams, VaultState};
+use princeps_vault::{VaultParams, VaultState};
 use serde::{Deserialize, Serialize};
 
 /// Static configuration for the node. Set once at chain genesis;
@@ -452,7 +452,7 @@ impl OpenHlNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openhl_funding::{IndexPrice, Notional, PositionSize};
+    use princeps_funding::{IndexPrice, Notional, PositionSize};
 
     fn default_node() -> OpenHlNode {
         OpenHlNode::new(OpenHlNodeConfig::hyperliquid_default())
@@ -460,7 +460,7 @@ mod tests {
 
     fn snapshot(account: u64, size: i64, entry: u64, collateral: i64) -> AccountSnapshot {
         AccountSnapshot {
-            account: openhl_clob::AccountId(account),
+            account: princeps_clob::AccountId(account),
             position_size: PositionSize(size),
             avg_entry: MarkPrice(entry),
             collateral: Notional(collateral),
@@ -497,7 +497,7 @@ mod tests {
         node.funding_clock = FundingClock::new(node.config.funding_params, 9);
         // Stage 16d: also pretend the oracle has a cached price.
         node.oracle.restore_current(AggregatedPrice {
-            index: openhl_funding::IndexPrice(102),
+            index: princeps_funding::IndexPrice(102),
             computed_at: 12,
             feeds_used: 3,
         });
@@ -531,7 +531,7 @@ mod tests {
         assert_eq!(fresh.funding_clock.last_settled_at(), 9);
         assert_eq!(
             fresh.oracle().current_price(),
-            Some(openhl_funding::IndexPrice(102)),
+            Some(princeps_funding::IndexPrice(102)),
         );
     }
 
@@ -635,7 +635,7 @@ mod tests {
         // ADL: ran on the deficit, ate into the winner.
         let adl = report.adl.as_ref().expect("ADL should have fired");
         assert!(!adl.records.is_empty(), "ADL should have records");
-        assert_eq!(adl.records[0].account, openhl_clob::AccountId(2));
+        assert_eq!(adl.records[0].account, princeps_clob::AccountId(2));
         // Conservation: absorbed + remaining = the original deficit.
         assert_eq!(
             adl.deficit_absorbed + adl.deficit_remaining,

@@ -101,7 +101,7 @@ mod tests {
         Vote as VoteTrait,
     };
     use informalsystems_malachitebft_signing_ed25519::PrivateKey;
-    use openhl_types::BlockHash;
+    use princeps_types::BlockHash;
     use rand::rngs::OsRng;
 
     fn validator(addr_byte: u8, power: u64) -> OpenHlValidator {

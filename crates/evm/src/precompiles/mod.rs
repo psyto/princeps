@@ -23,9 +23,9 @@ use alloy_evm::revm::precompile::{
     Precompile, PrecompileId, PrecompileOutput, PrecompileResult, Precompiles,
 };
 use alloy_primitives::{address, Address, Bytes};
-use openhl_clearing::Account;
-use openhl_clob::{AccountId, Book, Fill, Order, OrderId, OrderType, Price, Qty, Side};
-use openhl_funding::Notional;
+use princeps_clearing::Account;
+use princeps_clob::{AccountId, Book, Fill, Order, OrderId, OrderType, Price, Qty, Side};
+use princeps_funding::Notional;
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -186,7 +186,7 @@ pub fn uninstall_accounts() {
 /// is installed or if the book has no bids. Public so tests can verify
 /// install/uninstall without going through the precompile dispatch.
 #[must_use]
-pub fn current_best_bid() -> Option<(openhl_clob::Price, openhl_clob::Qty)> {
+pub fn current_best_bid() -> Option<(princeps_clob::Price, princeps_clob::Qty)> {
     let state = CLOB_STATE.read().expect("CLOB_STATE rwlock poisoned");
     let clob = state.as_ref()?;
     let book = clob.lock().expect("clob mutex poisoned");
@@ -194,20 +194,20 @@ pub fn current_best_bid() -> Option<(openhl_clob::Price, openhl_clob::Qty)> {
 }
 
 /// Stage 17j — read the currently-installed CLOB's midpoint as a
-/// [`openhl_funding::MarkPrice`]. Returns `None` when no CLOB is
+/// [`princeps_funding::MarkPrice`]. Returns `None` when no CLOB is
 /// installed or either side of the book is empty; that's the signal
 /// the withdraw precompile uses to fall back to the avg-entry IM
 /// rule. Mirror of [`crate::live_node::LiveRethEvmBridge::current_mark`]
 /// so the EVM-side check and the bridge's Rust-side check stay in
 /// lockstep.
 #[must_use]
-pub fn current_mark() -> Option<openhl_funding::MarkPrice> {
+pub fn current_mark() -> Option<princeps_funding::MarkPrice> {
     let state = CLOB_STATE.read().expect("CLOB_STATE rwlock poisoned");
     let clob = state.as_ref()?;
     let book = clob.lock().expect("clob mutex poisoned");
     let bid = book.best_bid()?;
     let ask = book.best_ask()?;
-    Some(openhl_funding::MarkPrice((bid.0 + ask.0) / 2))
+    Some(princeps_funding::MarkPrice((bid.0 + ask.0) / 2))
 }
 
 /// Stage 17i: in-memory snapshot of every mutating bridge global —
@@ -574,7 +574,7 @@ pub(crate) fn withdraw(input: &[u8], _gas_limit: u64, _reservoir: u64) -> Precom
 /// over the hardfork's spec id so we inherit Ethereum's evolution (e.g., the
 /// BLS-12-381 precompiles activated in Prague).
 #[must_use]
-pub fn openhl_precompiles(base: &Precompiles) -> Precompiles {
+pub fn princeps_precompiles(base: &Precompiles) -> Precompiles {
     let mut precompiles = base.clone();
     precompiles.extend([
         Precompile::new(
@@ -588,12 +588,12 @@ pub fn openhl_precompiles(base: &Precompiles) -> Precompiles {
             place_order,
         ),
         Precompile::new(
-            PrecompileId::custom("openhl_deposit"),
+            PrecompileId::custom("princeps_deposit"),
             OPENHL_DEPOSIT,
             deposit,
         ),
         Precompile::new(
-            PrecompileId::custom("openhl_withdraw"),
+            PrecompileId::custom("princeps_withdraw"),
             OPENHL_WITHDRAW,
             withdraw,
         ),
@@ -605,7 +605,7 @@ pub fn openhl_precompiles(base: &Precompiles) -> Precompiles {
 mod tests {
     use super::*;
     use alloy_primitives::U256;
-    use openhl_clob::{AccountId, Order, OrderId, OrderType, Price, Qty, Side};
+    use princeps_clob::{AccountId, Order, OrderId, OrderType, Price, Qty, Side};
 
     /// Tests in this module touch process-global `CLOB_STATE`. This mutex
     /// serializes them so parallel test execution can't observe a torn state.
@@ -664,18 +664,18 @@ mod tests {
         uninstall_clob();
     }
 
-    /// Registry test: `openhl_precompiles()` extends a base precompile set
+    /// Registry test: `princeps_precompiles()` extends a base precompile set
     /// with our CLOB precompile at the well-known address. This is what the
     /// Stage 9a `EvmFactory` plugs into every EVM instance Reth constructs.
     #[test]
-    fn openhl_precompiles_registers_clob_address() {
+    fn princeps_precompiles_registers_clob_address() {
         let base = Precompiles::cancun();
-        let extended = openhl_precompiles(base);
+        let extended = princeps_precompiles(base);
 
         // The CLOB address must be in the extended set.
         assert!(
             extended.contains(&CLOB_READ_BEST_BID),
-            "openhl_precompiles must register the CLOB_READ_BEST_BID address"
+            "princeps_precompiles must register the CLOB_READ_BEST_BID address"
         );
 
         // The base Ethereum precompiles (e.g. ECDSA recover at 0x...01) must
@@ -697,7 +697,7 @@ mod tests {
         let _g = TEST_SERIALIZER.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         uninstall_clob();
 
-        let extended = openhl_precompiles(Precompiles::cancun());
+        let extended = princeps_precompiles(Precompiles::cancun());
         let precompile = extended
             .get(&CLOB_READ_BEST_BID)
             .expect("CLOB precompile must be registered");
@@ -932,7 +932,7 @@ mod tests {
     /// withdraw stays byte-identical with `bridge.withdraw`.
     #[test]
     fn withdraw_precompile_uses_mark_aware_free_collateral_at_gain() {
-        use openhl_funding::{MarkPrice, PositionSize};
+        use princeps_funding::{MarkPrice, PositionSize};
 
         let _g = TEST_SERIALIZER.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         // Defensive: prior tests may have left a CLOB installed
@@ -1000,8 +1000,8 @@ mod tests {
     /// avg-entry rule — exactly what this test expects.
     #[test]
     fn withdraw_precompile_respects_initial_margin() {
-        use openhl_clearing::DEFAULT_INITIAL_MARGIN_BPS;
-        use openhl_funding::{MarkPrice, PositionSize};
+        use princeps_clearing::DEFAULT_INITIAL_MARGIN_BPS;
+        use princeps_funding::{MarkPrice, PositionSize};
 
         let _g = TEST_SERIALIZER.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         // Stage 17j: defensive clear of any leftover CLOB so the
@@ -1025,7 +1025,7 @@ mod tests {
         // Sanity-check the IM math against the helper itself so this
         // test is robust to a future DEFAULT bps tweak.
         let acct_snapshot = *accounts.lock().unwrap().get(&AccountId(42)).unwrap();
-        let im_req = openhl_clearing::initial_margin_requirement(
+        let im_req = princeps_clearing::initial_margin_requirement(
             &acct_snapshot,
             DEFAULT_INITIAL_MARGIN_BPS,
         );

@@ -1,5 +1,5 @@
 [package]
-name         = "openhl-evm"
+name = "princeps-evm"
 version      = { workspace = true }
 edition      = { workspace = true }
 rust-version = { workspace = true }
@@ -8,11 +8,11 @@ repository   = { workspace = true }
 authors      = { workspace = true }
 
 [dependencies]
-openhl-consensus         = { workspace = true }
-openhl-types             = { workspace = true }
-openhl-clob              = { workspace = true }
-openhl-clearing          = { workspace = true }
-openhl-funding           = { workspace = true }
+princeps-consensus         = { workspace = true }
+princeps-types             = { workspace = true }
+princeps-clob              = { workspace = true }
+princeps-clearing          = { workspace = true }
+princeps-funding           = { workspace = true }
 async-trait              = { workspace = true }
 eyre                     = { workspace = true }
 alloy-primitives         = { workspace = true, features = ["serde"] }

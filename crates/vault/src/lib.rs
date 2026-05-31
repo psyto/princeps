@@ -29,8 +29,8 @@
 //!
 //! The vault doesn't compute its own `PnL`. The bridge layer holds
 //! the vault's actual perp positions, runs them through
-//! `openhl_liquidation::margin_ratio` /
-//! `openhl_funding::compute_premium` each block, and calls
+//! `princeps_liquidation::margin_ratio` /
+//! `princeps_funding::compute_premium` each block, and calls
 //! [`state::VaultState::mark_to_market`] with the updated
 //! `total_assets`. The vault then prices subsequent deposits and
 //! withdrawals against the marked value. No shares move during

@@ -96,7 +96,7 @@ impl FundingClock {
 mod tests {
     use super::*;
     use crate::types::{Notional, PositionSize};
-    use openhl_clob::AccountId;
+    use princeps_clob::AccountId;
 
     fn pos(account: u64, size: i64) -> Position {
         Position {

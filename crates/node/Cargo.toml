@@ -1,5 +1,5 @@
 [package]
-name         = "openhl-node"
+name = "princeps-node"
 version      = { workspace = true }
 edition      = { workspace = true }
 rust-version = { workspace = true }
@@ -8,11 +8,11 @@ repository   = { workspace = true }
 authors      = { workspace = true }
 
 [dependencies]
-openhl-clob        = { path = "../clob" }
-openhl-funding     = { path = "../funding" }
-openhl-liquidation = { path = "../liquidation" }
-openhl-oracle      = { path = "../oracle" }
-openhl-vault       = { path = "../vault" }
+princeps-clob        = { path = "../clob" }
+princeps-funding     = { path = "../funding" }
+princeps-liquidation = { path = "../liquidation" }
+princeps-oracle      = { path = "../oracle" }
+princeps-vault       = { path = "../vault" }
 serde              = { workspace = true }
 
 [dev-dependencies]

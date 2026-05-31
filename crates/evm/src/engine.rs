@@ -8,8 +8,8 @@
 use alloy_consensus::Header;
 use alloy_primitives::{Address, B256};
 use async_trait::async_trait;
-use openhl_consensus::bridge::{BridgeError, ConsensusBridge};
-use openhl_types::{BlockHash, ExecutedBlock, PayloadAttrs, PayloadId, PayloadStatus};
+use princeps_consensus::bridge::{BridgeError, ConsensusBridge};
+use princeps_types::{BlockHash, ExecutedBlock, PayloadAttrs, PayloadId, PayloadStatus};
 use std::collections::HashMap;
 use std::sync::Mutex;
 

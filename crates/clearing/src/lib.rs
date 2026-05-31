@@ -10,7 +10,7 @@
 //!
 //! Hyperliquid-shape perpetuals settle in two parallel mechanisms:
 //! continuous price exposure via the *position* (size + avg_entry) and
-//! periodic cash transfers via funding ([`openhl_funding`]). When a
+//! periodic cash transfers via funding ([`princeps_funding`]). When a
 //! CLOB fill matches a maker and a taker, both accounts' positions
 //! must update: the avg_entry of any increase is a volume-weighted
 //! mean, and any decrease realizes PnL at `qty × (fill_price −
@@ -37,20 +37,20 @@
 //!   bridge-layer concerns. `apply_fill` returns the raw realized PnL;
 //!   the caller subtracts fees if applicable.
 //! - **A funding settler.** Funding settlement adjusts collateral on
-//!   a separate cadence; see [`openhl_funding::FundingClock`].
+//!   a separate cadence; see [`princeps_funding::FundingClock`].
 
-use openhl_clob::{AccountId, Price, Qty, Side};
-use openhl_funding::{MarkPrice, Notional, PositionSize};
+use princeps_clob::{AccountId, Price, Qty, Side};
+use princeps_funding::{MarkPrice, Notional, PositionSize};
 use serde::{Deserialize, Serialize};
 
 /// Scale factor for basis-point margin rates: 10⁴, so 1000 bps = 10%.
-/// Matches `openhl_liquidation::MARGIN_SCALE`; duplicated here so the
+/// Matches `princeps_liquidation::MARGIN_SCALE`; duplicated here so the
 /// margin helper below doesn't pull in the liquidation crate as a
 /// dependency of clearing's consumers.
 pub const MARGIN_SCALE: i64 = 10_000;
 
 /// Default initial-margin rate for v0: 10% (1000 bps), matching
-/// [`openhl_liquidation::LiquidationParams::hyperliquid_default`]. The
+/// [`princeps_liquidation::LiquidationParams::hyperliquid_default`]. The
 /// bridge and the deposit/withdraw precompiles need a margin rate to
 /// enforce margin-aware withdrawal but can't easily reach the
 /// integration coordinator's `LiquidationParams` at v0 — a constant
@@ -58,7 +58,7 @@ pub const MARGIN_SCALE: i64 = 10_000;
 pub const DEFAULT_INITIAL_MARGIN_BPS: u32 = 1_000;
 
 /// One account's persistent perp state. Same shape as
-/// `openhl_liquidation::AccountSnapshot` by design — the snapshot is a
+/// `princeps_liquidation::AccountSnapshot` by design — the snapshot is a
 /// per-tick read of this. We don't re-use that type directly because
 /// it lives in the liquidation crate's dep tree and conceptually models
 /// a *view*, not the owning record.
@@ -307,7 +307,7 @@ pub fn free_collateral(acct: &Account, mark: MarkPrice, im_bps: u32) -> i64 {
 }
 
 /// Saturating cast from `i128` to `i64`. Local copy of
-/// `openhl_liquidation::compute::saturate_i128_to_i64`, duplicated to
+/// `princeps_liquidation::compute::saturate_i128_to_i64`, duplicated to
 /// avoid pulling the liquidation crate into clearing's dep graph.
 fn saturate_i128_to_i64(v: i128) -> i64 {
     i64::try_from(v).unwrap_or(if v > 0 { i64::MAX } else { i64::MIN })

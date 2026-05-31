@@ -18,8 +18,8 @@ use crate::types::{
     AccountSnapshot, CloseOrderSpec, LiquidationParams, MarginHealth, MarginRatio, SolventClose,
     UnderwaterClose, MARGIN_SCALE,
 };
-use openhl_clob::{Qty, Side};
-use openhl_funding::MarkPrice;
+use princeps_clob::{Qty, Side};
+use princeps_funding::MarkPrice;
 
 /// Notional exposure of the account = `|position_size| × mark`, in quote
 /// units. Returns `0` for a flat position (no exposure regardless of mark).
@@ -256,8 +256,8 @@ pub fn underwater_close_outcome(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openhl_clob::AccountId;
-    use openhl_funding::{Notional, PositionSize};
+    use princeps_clob::AccountId;
+    use princeps_funding::{Notional, PositionSize};
     use proptest::prelude::*;
 
     fn snapshot(size: i64, entry: u64, collateral: i64) -> AccountSnapshot {

@@ -1,7 +1,7 @@
 //! The CL/EL contract: four messages between consensus and execution.
 
 use async_trait::async_trait;
-use openhl_types::{BlockHash, ExecutedBlock, PayloadAttrs, PayloadId, PayloadStatus};
+use princeps_types::{BlockHash, ExecutedBlock, PayloadAttrs, PayloadId, PayloadStatus};
 use thiserror::Error;
 
 /// The four-message contract between BFT consensus and EVM execution.

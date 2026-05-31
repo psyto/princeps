@@ -1,5 +1,5 @@
 use informalsystems_malachitebft_core_types::Value;
-use openhl_types::BlockHash;
+use princeps_types::BlockHash;
 use serde::{Deserialize, Serialize};
 
 /// The value consensus agrees on: an EVM block, identified by its block hash.

@@ -25,7 +25,7 @@ use informalsystems_malachitebft_core_types::{
     RoundCertificate, RoundCertificateType, RoundSignature, SignedMessage, Validity, VoteType,
 };
 use informalsystems_malachitebft_signing_ed25519::Signature;
-use openhl_types::BlockHash;
+use princeps_types::BlockHash;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -593,7 +593,7 @@ mod tests {
     fn assert_sync_codec<C: SyncCodec<OpenHlContext>>() {}
 
     #[test]
-    fn openhl_codec_satisfies_all_three_super_traits() {
+    fn princeps_codec_satisfies_all_three_super_traits() {
         assert_wal_codec::<OpenHlCodec>();
         assert_consensus_codec::<OpenHlCodec>();
         assert_sync_codec::<OpenHlCodec>();

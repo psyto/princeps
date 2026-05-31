@@ -1,5 +1,5 @@
 [package]
-name         = "openhl-codec"
+name = "princeps-codec"
 version      = { workspace = true }
 edition      = { workspace = true }
 rust-version = { workspace = true }

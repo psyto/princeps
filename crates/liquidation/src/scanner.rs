@@ -45,8 +45,8 @@ use crate::insurance::{InsuranceFund, WithdrawOutcome};
 use crate::types::{
     AccountSnapshot, CloseOrderSpec, LiquidationParams, MarginHealth, SolventClose, UnderwaterClose,
 };
-use openhl_clob::AccountId;
-use openhl_funding::MarkPrice;
+use princeps_clob::AccountId;
+use princeps_funding::MarkPrice;
 
 /// Discriminated outcome for a single liquidated account in a scan.
 ///
@@ -232,7 +232,7 @@ impl LiquidationScanner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openhl_funding::{Notional, PositionSize};
+    use princeps_funding::{Notional, PositionSize};
     use proptest::prelude::*;
 
     fn snapshot(account: u64, size: i64, entry: u64, collateral: i64) -> AccountSnapshot {

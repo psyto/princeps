@@ -47,17 +47,17 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use informalsystems_malachitebft_app::node::{Node, NodeHandle};
 use informalsystems_malachitebft_signing_ed25519::PrivateKey;
-use openhl_consensus::run_engine_app;
-use openhl_consensus::run_single_validator;
-use openhl_consensus::OpenHlPrivateKeyFile;
-use openhl_clob::{AccountId as ClobAccountId, Order, OrderId, OrderType, Price, Qty, Side};
-use openhl_evm::{BridgeSnapshot, InMemoryEvmBridge, LiveRethEvmBridge, OpenHlExecutorBuilder};
+use princeps_consensus::run_engine_app;
+use princeps_consensus::run_single_validator;
+use princeps_consensus::OpenHlPrivateKeyFile;
+use princeps_clob::{AccountId as ClobAccountId, Order, OrderId, OrderType, Price, Qty, Side};
+use princeps_evm::{BridgeSnapshot, InMemoryEvmBridge, LiveRethEvmBridge, OpenHlExecutorBuilder};
 use k256::ecdsa::{signature::Signer, SigningKey};
-use openhl_funding::{IndexPrice, MarkPrice, Notional, PositionSize};
-use openhl_liquidation::{AccountSnapshot, CloseOutcomeKind};
-use openhl_node::{CoordinatorSnapshot, OpenHlNode, OpenHlNodeConfig, TickInput, TickReport};
-use openhl_oracle::{FeedId, PriceObservation, PublisherKey, Signature as OracleSignature};
-use openhl_types::BlockHash;
+use princeps_funding::{IndexPrice, MarkPrice, Notional, PositionSize};
+use princeps_liquidation::{AccountSnapshot, CloseOutcomeKind};
+use princeps_node::{CoordinatorSnapshot, OpenHlNode, OpenHlNodeConfig, TickInput, TickReport};
+use princeps_oracle::{FeedId, PriceObservation, PublisherKey, Signature as OracleSignature};
+use princeps_types::BlockHash;
 use rand::rngs::OsRng;
 use reth_chainspec::ChainSpec;
 use reth_db::{init_db, mdbx::DatabaseArguments};
@@ -369,7 +369,7 @@ async fn run_devnet(rounds: u64) -> eyre::Result<()> {
 ///   1. Spin up a Reth `EthereumNode` with `OpenHlExecutorBuilder`
 ///      (so the EVM has our custom CLOB precompiles registered).
 ///   2. Construct a [`LiveRethEvmBridge`] against the node's provider.
-///   3. Bootstrap a consensus [`openhl_consensus::OpenHlNode`] with a
+///   3. Bootstrap a consensus [`princeps_consensus::OpenHlNode`] with a
 ///      fresh Ed25519 keypair and a single-validator set.
 ///   4. `node.start().await` — spawns the Malachite actor system.
 ///   5. `take_channels().await` — get the engine's `AppMsg` channels.
@@ -515,7 +515,7 @@ async fn run_reth_devnet(
     // and (future) multi-validator peers see a continuous height
     // sequence rather than restarting at 1 every run.
     let initial_height_for_consensus =
-        openhl_consensus::types::OpenHlHeight(prior_decisions.saturating_add(1));
+        princeps_consensus::types::OpenHlHeight(prior_decisions.saturating_add(1));
 
     // 3. Consensus node with single-validator set.
     //    Stage 13h: load the validator key from disk if present,
@@ -594,10 +594,10 @@ async fn run_reth_devnet(
         let digest = Sha256::digest(public.as_bytes());
         let mut addr_bytes = [0u8; 20];
         addr_bytes.copy_from_slice(&digest[12..32]);
-        let address = openhl_consensus::types::OpenHlAddress(addr_bytes);
+        let address = princeps_consensus::types::OpenHlAddress(addr_bytes);
         println!("      validator set    = (single-validator default)");
-        let set = openhl_consensus::types::OpenHlValidatorSet::new(vec![
-            openhl_consensus::types::OpenHlValidator::new(address, public, 1),
+        let set = princeps_consensus::types::OpenHlValidatorSet::new(vec![
+            princeps_consensus::types::OpenHlValidator::new(address, public, 1),
         ]);
         (set, Vec::new())
     };
@@ -607,7 +607,7 @@ async fn run_reth_devnet(
     let consensus_home = data_dir_path.join("consensus");
     std::fs::create_dir_all(&consensus_home)?;
     println!("      consensus home   = {}", consensus_home.display());
-    let mut consensus_node = openhl_consensus::OpenHlNode::new(
+    let mut consensus_node = princeps_consensus::OpenHlNode::new(
         private,
         validator_set.clone(),
         consensus_home,
@@ -1042,7 +1042,7 @@ fn load_chain_spec(path: &Path) -> eyre::Result<Arc<ChainSpec>> {
 /// validator in the set — used to filter our own entry out of the
 /// libp2p dial list (Stage 13l).
 struct LoadedValidatorSet {
-    set: openhl_consensus::types::OpenHlValidatorSet,
+    set: princeps_consensus::types::OpenHlValidatorSet,
     peer_multiaddrs: Vec<Option<String>>,
     self_index: usize,
 }
@@ -1097,8 +1097,8 @@ fn load_validator_set(
         let digest = Sha256::digest(pubkey.as_bytes());
         let mut addr = [0u8; 20];
         addr.copy_from_slice(&digest[12..32]);
-        built.push(openhl_consensus::types::OpenHlValidator::new(
-            openhl_consensus::types::OpenHlAddress(addr),
+        built.push(princeps_consensus::types::OpenHlValidator::new(
+            princeps_consensus::types::OpenHlAddress(addr),
             pubkey,
             entry.voting_power,
         ));
@@ -1112,7 +1112,7 @@ fn load_validator_set(
         )
     })?;
     Ok(LoadedValidatorSet {
-        set: openhl_consensus::types::OpenHlValidatorSet::new(built),
+        set: princeps_consensus::types::OpenHlValidatorSet::new(built),
         peer_multiaddrs,
         self_index,
     })

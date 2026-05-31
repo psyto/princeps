@@ -109,7 +109,7 @@ mod tests {
     use super::*;
     use crate::types::{OpenHlAddress, OpenHlHeight, OpenHlValue};
     use informalsystems_malachitebft_core_types::{NilOrVal, Round, VoteType};
-    use openhl_types::BlockHash;
+    use princeps_types::BlockHash;
     use rand::rngs::OsRng;
 
     fn provider() -> (OpenHlSigningProvider, PublicKey) {
