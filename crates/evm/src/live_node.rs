@@ -197,10 +197,14 @@ impl<P> LiveRethEvmBridge<P> {
 
         // Stage 20a: lending state (markets + positions). Starts empty;
         // markets are registered explicitly by the binary at boot
-        // (`with_markets_mut`) before any borrow/repay traffic. Precompile
-        // wiring lands in Stage 21.
+        // (`with_markets_mut`) before any borrow/repay traffic.
+        //
+        // Stage 21: install into the precompile globals so the 5 lending
+        // precompiles see the same maps the bridge methods mutate.
         let markets = Arc::new(Mutex::new(BTreeMap::new()));
         let positions = Arc::new(Mutex::new(BTreeMap::new()));
+        crate::precompiles::install_lending_markets(Arc::clone(&markets));
+        crate::precompiles::install_lending_positions(Arc::clone(&positions));
 
         Self {
             provider,

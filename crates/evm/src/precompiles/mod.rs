@@ -26,7 +26,13 @@ use alloy_primitives::{address, Address, Bytes};
 use princeps_clearing::Account;
 use princeps_clob::{AccountId, Book, Fill, Order, OrderId, OrderType, Price, Qty, Side};
 use princeps_funding::Notional;
-use std::collections::HashMap;
+use princeps_lending::{
+    borrow as lending_position_borrow, compute_health_factor as lending_compute_health_factor,
+    deposit_collateral as lending_position_deposit_collateral,
+    repay as lending_position_repay, withdraw_collateral as lending_position_withdraw_collateral,
+    Index as LendingIndex, Market, MarketId, Position,
+};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Mutex, RwLock,
@@ -106,6 +112,61 @@ const DEPOSIT_BASE_GAS_COST: u64 = 500;
 /// Base gas for the withdraw precompile (Stage 17e). Same magnitude.
 const WITHDRAW_BASE_GAS_COST: u64 = 500;
 
+// === Stage 21: Lending precompile addresses ===
+//
+// Continue the `0x0c1*` range. Lending precompiles do more work than
+// CLOB precompiles (per-position state mutation + health check +
+// market totals update), so gas costs are higher than the 500-baseline
+// of CLOB precompiles. Final tuning happens when v0 testnet runs at
+// realistic load.
+
+/// `princeps_lending_deposit_collateral` precompile address (Stage 21a).
+///
+/// Solidity call shape (96-byte input):
+/// `call(gas, 0x...0c1f, calldata=(uint64 account, uint32 market_id, uint128 amount), ...) → uint256 new_collateral`
+pub const PRINCEPS_LENDING_DEPOSIT_COLLATERAL: Address =
+    address!("0x0000000000000000000000000000000000000c1f");
+
+/// `princeps_lending_borrow` precompile address (Stage 21b).
+///
+/// Solidity call shape (160-byte input):
+/// `call(gas, 0x...0c20, calldata=(uint64 account, uint32 market_id, uint128 amount, uint128 collateral_price, uint128 debt_price), ...) → uint256 success(1)/failure(0)`
+pub const PRINCEPS_LENDING_BORROW: Address =
+    address!("0x0000000000000000000000000000000000000c20");
+
+/// `princeps_lending_repay` precompile address (Stage 21c).
+///
+/// Solidity call shape (96-byte input):
+/// `call(gas, 0x...0c21, calldata=(uint64 account, uint32 market_id, uint128 amount), ...) → uint256 actual_repaid`
+pub const PRINCEPS_LENDING_REPAY: Address =
+    address!("0x0000000000000000000000000000000000000c21");
+
+/// `princeps_lending_withdraw_collateral` precompile address (Stage 21d).
+///
+/// Solidity call shape (160-byte input):
+/// `call(gas, 0x...0c22, calldata=(uint64 account, uint32 market_id, uint128 amount, uint128 collateral_price, uint128 debt_price), ...) → uint256 success(1)/failure(0)`
+pub const PRINCEPS_LENDING_WITHDRAW_COLLATERAL: Address =
+    address!("0x0000000000000000000000000000000000000c22");
+
+/// `princeps_lending_health` precompile address (Stage 21e). Read-only;
+/// can be invoked via `staticcall`.
+///
+/// Solidity call shape (128-byte input):
+/// `staticcall(gas, 0x...0c23, calldata=(uint64 account, uint32 market_id, uint128 collateral_price, uint128 debt_price), ...) → uint256 health_factor_ray`
+///
+/// Returns `0` for no-position-or-no-market (which is indistinguishable
+/// from a real HF of 0 — fully underwater. Callers needing to
+/// disambiguate should check position existence separately).
+/// Returns `u256::MAX` for "no debt = infinite health".
+pub const PRINCEPS_LENDING_HEALTH: Address =
+    address!("0x0000000000000000000000000000000000000c23");
+
+/// Base gas for lending precompiles (Stage 21). Higher than CLOB because
+/// of per-position state mutation + market totals update + (for borrow/
+/// withdraw/health) compute_health_factor evaluation. v0 setting; tuned
+/// by testnet load profiling.
+const LENDING_BASE_GAS_COST: u64 = 2_000;
+
 /// Monotonic order-ID counter for orders placed via the EVM. Starts at 1
 /// so the sentinel value 0 (returned on rejection) is distinguishable from
 /// a successfully placed order.
@@ -180,6 +241,41 @@ pub fn install_accounts(accounts: Arc<Mutex<HashMap<AccountId, Account>>>) {
 /// Clear the installed account map. Test-only typical use; idempotent.
 pub fn uninstall_accounts() {
     *ACCOUNTS_STATE.write().expect("ACCOUNTS_STATE rwlock poisoned") = None;
+}
+
+/// Process-global handle to the bridge's lending markets map (Stage 21).
+/// When installed, all 5 lending precompiles mutate / read this same map
+/// that `LiveRethEvmBridge`'s `lending_*` methods touch. Same
+/// shared-Arc lifecycle as `ACCOUNTS_STATE`.
+static MARKETS_STATE: RwLock<Option<Arc<Mutex<BTreeMap<MarketId, Market>>>>> = RwLock::new(None);
+
+/// Install the lending markets map the precompiles should mutate.
+/// Companion to `install_accounts`; called by `LiveRethEvmBridge::new`.
+pub fn install_lending_markets(markets: Arc<Mutex<BTreeMap<MarketId, Market>>>) {
+    *MARKETS_STATE.write().expect("MARKETS_STATE rwlock poisoned") = Some(markets);
+}
+
+/// Clear the installed markets map. Test-only typical use; idempotent.
+pub fn uninstall_lending_markets() {
+    *MARKETS_STATE.write().expect("MARKETS_STATE rwlock poisoned") = None;
+}
+
+/// Process-global handle to the bridge's lending positions map (Stage 21).
+/// Same shared-Arc lifecycle as `MARKETS_STATE`.
+static POSITIONS_STATE: RwLock<
+    Option<Arc<Mutex<BTreeMap<(AccountId, MarketId), Position>>>>,
+> = RwLock::new(None);
+
+/// Install the lending positions map the precompiles should mutate.
+pub fn install_lending_positions(
+    positions: Arc<Mutex<BTreeMap<(AccountId, MarketId), Position>>>,
+) {
+    *POSITIONS_STATE.write().expect("POSITIONS_STATE rwlock poisoned") = Some(positions);
+}
+
+/// Clear the installed positions map. Test-only typical use; idempotent.
+pub fn uninstall_lending_positions() {
+    *POSITIONS_STATE.write().expect("POSITIONS_STATE rwlock poisoned") = None;
 }
 
 /// Read the currently-installed CLOB's best bid. Returns `None` if no CLOB
@@ -569,6 +665,420 @@ pub(crate) fn withdraw(input: &[u8], _gas_limit: u64, _reservoir: u64) -> Precom
     ))
 }
 
+/// Read a big-endian u32 from the last 4 bytes of a 32-byte ABI chunk.
+fn u32_from_be_chunk(chunk: &[u8]) -> u32 {
+    debug_assert!(chunk.len() == 32);
+    let mut buf = [0u8; 4];
+    buf.copy_from_slice(&chunk[28..32]);
+    u32::from_be_bytes(buf)
+}
+
+/// Read a big-endian u128 from the last 16 bytes of a 32-byte ABI chunk.
+fn u128_from_be_chunk(chunk: &[u8]) -> u128 {
+    debug_assert!(chunk.len() == 32);
+    let mut buf = [0u8; 16];
+    buf.copy_from_slice(&chunk[16..32]);
+    u128::from_be_bytes(buf)
+}
+
+/// Encode a u128 as a 32-byte big-endian ABI word (zero-padded upper 16 bytes).
+fn u128_to_abi_word(v: u128) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[16..32].copy_from_slice(&v.to_be_bytes());
+    out
+}
+
+/// Encode a u256 = u128::MAX << 128 | u128::MAX as 32-byte big-endian — for
+/// the "infinite health" signal from `lending_health`.
+fn u256_max_word() -> [u8; 32] {
+    [0xff; 32]
+}
+
+/// Encode a u256 ABI word from a u128 (zero upper).
+fn u128_in_low_word(v: u128) -> Vec<u8> {
+    u128_to_abi_word(v).to_vec()
+}
+
+// ===== Stage 21 lending precompile handlers =====
+//
+// All 5 follow the same pattern:
+// 1. Validate input length; short-input → return zero output.
+// 2. Decode ABI chunks (account_id, market_id, amount, optional prices).
+// 3. Read installed markets + positions globals; missing → return zero.
+// 4. Lock both maps in markets-then-positions order (matches bridge convention).
+// 5. Do the mutation (deposit/borrow/repay/withdraw) or read (health).
+// 6. Encode result into 32-byte output.
+//
+// Errors return all-zero output. Callers distinguish success/failure
+// by comparing pre-call and post-call state (same convention as the
+// existing deposit/withdraw precompiles).
+
+/// `princeps_lending_deposit_collateral` precompile handler (Stage 21a).
+#[allow(clippy::unnecessary_wraps)]
+pub(crate) fn lending_deposit(
+    input: &[u8],
+    _gas_limit: u64,
+    _reservoir: u64,
+) -> PrecompileResult {
+    let zero_out = vec![0u8; 32];
+    if input.len() < 96 {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    }
+    let account_id = u64_from_be_chunk(&input[0..32]);
+    let market_id = u32_from_be_chunk(&input[32..64]);
+    let amount = u128_from_be_chunk(&input[64..96]);
+
+    let markets_handle = MARKETS_STATE.read().expect("MARKETS_STATE rwlock poisoned");
+    let positions_handle = POSITIONS_STATE
+        .read()
+        .expect("POSITIONS_STATE rwlock poisoned");
+    let (Some(markets), Some(positions)) = (markets_handle.as_ref(), positions_handle.as_ref())
+    else {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    };
+
+    let markets_guard = markets.lock().expect("markets mutex poisoned");
+    if !markets_guard.contains_key(&MarketId(market_id)) {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    }
+    drop(markets_guard);
+
+    let mut positions_guard = positions.lock().expect("positions mutex poisoned");
+    let key = (AccountId(account_id), MarketId(market_id));
+    let position = positions_guard
+        .entry(key)
+        .or_insert_with(|| Position::empty(MarketId(market_id)));
+    if lending_position_deposit_collateral(position, amount).is_err() {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    }
+    let new_collateral = position.collateral_amount;
+    drop(positions_guard);
+
+    Ok(PrecompileOutput::new(
+        LENDING_BASE_GAS_COST,
+        Bytes::from(u128_in_low_word(new_collateral)),
+        0,
+    ))
+}
+
+/// `princeps_lending_borrow` precompile handler (Stage 21b).
+#[allow(clippy::unnecessary_wraps)]
+pub(crate) fn lending_borrow(
+    input: &[u8],
+    _gas_limit: u64,
+    _reservoir: u64,
+) -> PrecompileResult {
+    let zero_out = vec![0u8; 32];
+    if input.len() < 160 {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    }
+    let account_id = u64_from_be_chunk(&input[0..32]);
+    let market_id = u32_from_be_chunk(&input[32..64]);
+    let amount = u128_from_be_chunk(&input[64..96]);
+    let collateral_price = u128_from_be_chunk(&input[96..128]);
+    let debt_price = u128_from_be_chunk(&input[128..160]);
+
+    let markets_handle = MARKETS_STATE.read().expect("MARKETS_STATE rwlock poisoned");
+    let positions_handle = POSITIONS_STATE
+        .read()
+        .expect("POSITIONS_STATE rwlock poisoned");
+    let (Some(markets), Some(positions)) = (markets_handle.as_ref(), positions_handle.as_ref())
+    else {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    };
+
+    let mut markets_guard = markets.lock().expect("markets mutex poisoned");
+    let Some(market) = markets_guard.get_mut(&MarketId(market_id)) else {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    };
+    let Some(new_borrowed) = market.total_borrowed.checked_add(amount) else {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    };
+    if new_borrowed > market.total_supplied {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    }
+
+    let mut positions_guard = positions.lock().expect("positions mutex poisoned");
+    let key = (AccountId(account_id), MarketId(market_id));
+    let existing = positions_guard
+        .get(&key)
+        .cloned()
+        .unwrap_or_else(|| Position::empty(MarketId(market_id)));
+
+    let mut hypothetical = existing;
+    if lending_position_borrow(&mut hypothetical, amount, market.borrow_index).is_err() {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    }
+    let hf = lending_compute_health_factor(&hypothetical, market, collateral_price, debt_price);
+    if hf < LendingIndex::RAY {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    }
+    positions_guard.insert(key, hypothetical);
+    market.total_borrowed = new_borrowed;
+
+    // success = 1
+    Ok(PrecompileOutput::new(
+        LENDING_BASE_GAS_COST,
+        Bytes::from(u128_in_low_word(1)),
+        0,
+    ))
+}
+
+/// `princeps_lending_repay` precompile handler (Stage 21c).
+#[allow(clippy::unnecessary_wraps)]
+pub(crate) fn lending_repay(
+    input: &[u8],
+    _gas_limit: u64,
+    _reservoir: u64,
+) -> PrecompileResult {
+    let zero_out = vec![0u8; 32];
+    if input.len() < 96 {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    }
+    let account_id = u64_from_be_chunk(&input[0..32]);
+    let market_id = u32_from_be_chunk(&input[32..64]);
+    let amount = u128_from_be_chunk(&input[64..96]);
+
+    let markets_handle = MARKETS_STATE.read().expect("MARKETS_STATE rwlock poisoned");
+    let positions_handle = POSITIONS_STATE
+        .read()
+        .expect("POSITIONS_STATE rwlock poisoned");
+    let (Some(markets), Some(positions)) = (markets_handle.as_ref(), positions_handle.as_ref())
+    else {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    };
+
+    let mut markets_guard = markets.lock().expect("markets mutex poisoned");
+    let Some(market) = markets_guard.get_mut(&MarketId(market_id)) else {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    };
+
+    let mut positions_guard = positions.lock().expect("positions mutex poisoned");
+    let key = (AccountId(account_id), MarketId(market_id));
+    let Some(position) = positions_guard.get_mut(&key) else {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    };
+    let Ok(actual_repaid) = lending_position_repay(position, amount, market.borrow_index) else {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    };
+    market.total_borrowed = market.total_borrowed.saturating_sub(actual_repaid);
+
+    Ok(PrecompileOutput::new(
+        LENDING_BASE_GAS_COST,
+        Bytes::from(u128_in_low_word(actual_repaid)),
+        0,
+    ))
+}
+
+/// `princeps_lending_withdraw_collateral` precompile handler (Stage 21d).
+#[allow(clippy::unnecessary_wraps)]
+pub(crate) fn lending_withdraw(
+    input: &[u8],
+    _gas_limit: u64,
+    _reservoir: u64,
+) -> PrecompileResult {
+    let zero_out = vec![0u8; 32];
+    if input.len() < 160 {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    }
+    let account_id = u64_from_be_chunk(&input[0..32]);
+    let market_id = u32_from_be_chunk(&input[32..64]);
+    let amount = u128_from_be_chunk(&input[64..96]);
+    let collateral_price = u128_from_be_chunk(&input[96..128]);
+    let debt_price = u128_from_be_chunk(&input[128..160]);
+
+    let markets_handle = MARKETS_STATE.read().expect("MARKETS_STATE rwlock poisoned");
+    let positions_handle = POSITIONS_STATE
+        .read()
+        .expect("POSITIONS_STATE rwlock poisoned");
+    let (Some(markets), Some(positions)) = (markets_handle.as_ref(), positions_handle.as_ref())
+    else {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    };
+
+    let markets_guard = markets.lock().expect("markets mutex poisoned");
+    let Some(market) = markets_guard.get(&MarketId(market_id)).cloned() else {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    };
+    drop(markets_guard);
+
+    let mut positions_guard = positions.lock().expect("positions mutex poisoned");
+    let key = (AccountId(account_id), MarketId(market_id));
+    let Some(existing) = positions_guard.get(&key).cloned() else {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    };
+    let mut hypothetical = existing;
+    if lending_position_withdraw_collateral(&mut hypothetical, amount).is_err() {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    }
+    let hf = lending_compute_health_factor(&hypothetical, &market, collateral_price, debt_price);
+    if hf < LendingIndex::RAY {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    }
+    positions_guard.insert(key, hypothetical);
+
+    Ok(PrecompileOutput::new(
+        LENDING_BASE_GAS_COST,
+        Bytes::from(u128_in_low_word(1)),
+        0,
+    ))
+}
+
+/// `princeps_lending_health` precompile handler (Stage 21e). Read-only.
+#[allow(clippy::unnecessary_wraps)]
+pub(crate) fn lending_health(
+    input: &[u8],
+    _gas_limit: u64,
+    _reservoir: u64,
+) -> PrecompileResult {
+    let zero_out = vec![0u8; 32];
+    if input.len() < 128 {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    }
+    let account_id = u64_from_be_chunk(&input[0..32]);
+    let market_id = u32_from_be_chunk(&input[32..64]);
+    let collateral_price = u128_from_be_chunk(&input[64..96]);
+    let debt_price = u128_from_be_chunk(&input[96..128]);
+
+    let markets_handle = MARKETS_STATE.read().expect("MARKETS_STATE rwlock poisoned");
+    let positions_handle = POSITIONS_STATE
+        .read()
+        .expect("POSITIONS_STATE rwlock poisoned");
+    let (Some(markets), Some(positions)) = (markets_handle.as_ref(), positions_handle.as_ref())
+    else {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    };
+
+    let markets_guard = markets.lock().expect("markets mutex poisoned");
+    let Some(market) = markets_guard.get(&MarketId(market_id)) else {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    };
+    let positions_guard = positions.lock().expect("positions mutex poisoned");
+    let key = (AccountId(account_id), MarketId(market_id));
+    let Some(position) = positions_guard.get(&key) else {
+        // No position → encode as "infinite health" (matches no-debt semantic)
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(u256_max_word().to_vec()),
+            0,
+        ));
+    };
+    let hf = lending_compute_health_factor(position, market, collateral_price, debt_price);
+
+    // Encode HF into low 16 bytes of 32-byte word. RAY fits in u128.
+    // For HF = u128::MAX (infinite), use u256::MAX for unambiguous signal.
+    let out = if hf == u128::MAX {
+        u256_max_word().to_vec()
+    } else {
+        u128_in_low_word(hf)
+    };
+    Ok(PrecompileOutput::new(
+        LENDING_BASE_GAS_COST,
+        Bytes::from(out),
+        0,
+    ))
+}
+
 /// Build a `Precompiles` set that extends Reth's standard precompiles with
 /// princeps's CLOB-reading + CLOB-writing additions. The base set is parameterized
 /// over the hardfork's spec id so we inherit Ethereum's evolution (e.g., the
@@ -596,6 +1106,31 @@ pub fn princeps_precompiles(base: &Precompiles) -> Precompiles {
             PrecompileId::custom("princeps_withdraw"),
             PRINCEPS_WITHDRAW,
             withdraw,
+        ),
+        Precompile::new(
+            PrecompileId::custom("princeps_lending_deposit_collateral"),
+            PRINCEPS_LENDING_DEPOSIT_COLLATERAL,
+            lending_deposit,
+        ),
+        Precompile::new(
+            PrecompileId::custom("princeps_lending_borrow"),
+            PRINCEPS_LENDING_BORROW,
+            lending_borrow,
+        ),
+        Precompile::new(
+            PrecompileId::custom("princeps_lending_repay"),
+            PRINCEPS_LENDING_REPAY,
+            lending_repay,
+        ),
+        Precompile::new(
+            PrecompileId::custom("princeps_lending_withdraw_collateral"),
+            PRINCEPS_LENDING_WITHDRAW_COLLATERAL,
+            lending_withdraw,
+        ),
+        Precompile::new(
+            PrecompileId::custom("princeps_lending_health"),
+            PRINCEPS_LENDING_HEALTH,
+            lending_health,
         ),
     ]);
     precompiles
@@ -1098,5 +1633,201 @@ mod tests {
 
         uninstall_fill_sink();
         uninstall_clob();
+    }
+
+    // ===== Stage 21: lending precompile e2e tests =====
+
+    fn make_test_lending_market() -> (
+        Arc<Mutex<BTreeMap<MarketId, Market>>>,
+        Arc<Mutex<BTreeMap<(AccountId, MarketId), Position>>>,
+    ) {
+        use princeps_lending::{AssetId, Bps, IrmParams};
+        let markets = Arc::new(Mutex::new(BTreeMap::<MarketId, Market>::new()));
+        let positions =
+            Arc::new(Mutex::new(BTreeMap::<(AccountId, MarketId), Position>::new()));
+        let mut market = Market::new(
+            MarketId(0),
+            AssetId(1),
+            AssetId(0),
+            IrmParams {
+                base_rate_per_block: 0,
+                slope_below_kink_per_block: LendingIndex::RAY / 10_000,
+                slope_above_kink_per_block: LendingIndex::RAY / 1_000,
+                kink_bps: Bps(8_000),
+            },
+            Bps(9_500),
+            Bps(500),
+            Bps(1_000),
+            0,
+        );
+        market.total_supplied = 1_000_000;
+        markets.lock().unwrap().insert(MarketId(0), market);
+        (markets, positions)
+    }
+
+    fn encode_3_chunk_input(account_id: u64, market_id: u32, amount: u128) -> Vec<u8> {
+        let mut input = vec![0u8; 96];
+        input[24..32].copy_from_slice(&account_id.to_be_bytes());
+        input[60..64].copy_from_slice(&market_id.to_be_bytes());
+        input[80..96].copy_from_slice(&amount.to_be_bytes());
+        input
+    }
+
+    fn encode_5_chunk_input(
+        account_id: u64,
+        market_id: u32,
+        amount: u128,
+        coll_price: u128,
+        debt_price: u128,
+    ) -> Vec<u8> {
+        let mut input = vec![0u8; 160];
+        input[24..32].copy_from_slice(&account_id.to_be_bytes());
+        input[60..64].copy_from_slice(&market_id.to_be_bytes());
+        input[80..96].copy_from_slice(&amount.to_be_bytes());
+        input[112..128].copy_from_slice(&coll_price.to_be_bytes());
+        input[144..160].copy_from_slice(&debt_price.to_be_bytes());
+        input
+    }
+
+    fn decode_u128_from_low_word(bytes: &[u8]) -> u128 {
+        assert_eq!(bytes.len(), 32);
+        let mut buf = [0u8; 16];
+        buf.copy_from_slice(&bytes[16..32]);
+        u128::from_be_bytes(buf)
+    }
+
+    #[test]
+    fn lending_deposit_precompile_e2e_mutates_position() {
+        let _g = TEST_SERIALIZER
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        uninstall_lending_markets();
+        uninstall_lending_positions();
+
+        let (markets, positions) = make_test_lending_market();
+        install_lending_markets(Arc::clone(&markets));
+        install_lending_positions(Arc::clone(&positions));
+
+        let input = encode_3_chunk_input(42, 0, 500);
+        let result = lending_deposit(&input, 100_000, 0).unwrap();
+        let new_collateral = decode_u128_from_low_word(&result.bytes);
+        assert_eq!(new_collateral, 500);
+
+        let positions_guard = positions.lock().unwrap();
+        let position = positions_guard
+            .get(&(AccountId(42), MarketId(0)))
+            .expect("position created");
+        assert_eq!(position.collateral_amount, 500);
+        drop(positions_guard);
+
+        uninstall_lending_markets();
+        uninstall_lending_positions();
+    }
+
+    #[test]
+    fn lending_deposit_short_input_returns_zero() {
+        let _g = TEST_SERIALIZER
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        uninstall_lending_markets();
+        uninstall_lending_positions();
+
+        let (markets, positions) = make_test_lending_market();
+        install_lending_markets(Arc::clone(&markets));
+        install_lending_positions(Arc::clone(&positions));
+
+        let short = vec![0u8; 32]; // Need 96 bytes
+        let result = lending_deposit(&short, 100_000, 0).unwrap();
+        let v = decode_u128_from_low_word(&result.bytes);
+        assert_eq!(v, 0);
+
+        uninstall_lending_markets();
+        uninstall_lending_positions();
+    }
+
+    #[test]
+    fn lending_borrow_then_health_then_repay_round_trip() {
+        let _g = TEST_SERIALIZER
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        uninstall_lending_markets();
+        uninstall_lending_positions();
+
+        let (markets, positions) = make_test_lending_market();
+        install_lending_markets(Arc::clone(&markets));
+        install_lending_positions(Arc::clone(&positions));
+
+        // 1. Deposit 1000 USDC
+        let deposit_in = encode_3_chunk_input(1, 0, 1_000);
+        lending_deposit(&deposit_in, 100_000, 0).unwrap();
+
+        // 2. Borrow 500 ETH @ prices (1, 1) — HF should be 1.9 (healthy)
+        let borrow_in = encode_5_chunk_input(1, 0, 500, 1, 1);
+        let borrow_out = lending_borrow(&borrow_in, 100_000, 0).unwrap();
+        assert_eq!(
+            decode_u128_from_low_word(&borrow_out.bytes),
+            1,
+            "borrow should succeed"
+        );
+
+        // 3. Check health: expect ~1.9 RAY
+        let mut health_in = vec![0u8; 128];
+        health_in[24..32].copy_from_slice(&1u64.to_be_bytes());
+        health_in[60..64].copy_from_slice(&0u32.to_be_bytes());
+        health_in[80..96].copy_from_slice(&1u128.to_be_bytes());
+        health_in[112..128].copy_from_slice(&1u128.to_be_bytes());
+        let health_out = lending_health(&health_in, 100_000, 0).unwrap();
+        let hf = decode_u128_from_low_word(&health_out.bytes);
+        assert!(
+            hf > LendingIndex::RAY,
+            "HF should be > 1.0 (got {hf}, RAY = {})",
+            LendingIndex::RAY
+        );
+
+        // 4. Repay 200 ETH
+        let repay_in = encode_3_chunk_input(1, 0, 200);
+        let repay_out = lending_repay(&repay_in, 100_000, 0).unwrap();
+        assert_eq!(decode_u128_from_low_word(&repay_out.bytes), 200);
+
+        // 5. Verify market state
+        let markets_guard = markets.lock().unwrap();
+        let market = markets_guard.get(&MarketId(0)).unwrap();
+        assert_eq!(market.total_borrowed, 300);
+        drop(markets_guard);
+
+        uninstall_lending_markets();
+        uninstall_lending_positions();
+    }
+
+    #[test]
+    fn lending_borrow_rejects_post_unhealthy() {
+        let _g = TEST_SERIALIZER
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        uninstall_lending_markets();
+        uninstall_lending_positions();
+
+        let (markets, positions) = make_test_lending_market();
+        install_lending_markets(Arc::clone(&markets));
+        install_lending_positions(Arc::clone(&positions));
+
+        // Deposit only 100, then try to borrow 1000 — would be massively underwater
+        lending_deposit(&encode_3_chunk_input(1, 0, 100), 100_000, 0).unwrap();
+        let borrow_out =
+            lending_borrow(&encode_5_chunk_input(1, 0, 1_000, 1, 1), 100_000, 0).unwrap();
+        // Failure → 0
+        assert_eq!(decode_u128_from_low_word(&borrow_out.bytes), 0);
+
+        // State should be unchanged
+        let markets_guard = markets.lock().unwrap();
+        assert_eq!(markets_guard.get(&MarketId(0)).unwrap().total_borrowed, 0);
+        drop(markets_guard);
+        let positions_guard = positions.lock().unwrap();
+        let position = positions_guard.get(&(AccountId(1), MarketId(0))).unwrap();
+        assert_eq!(position.scaled_debt, 0);
+        drop(positions_guard);
+
+        uninstall_lending_markets();
+        uninstall_lending_positions();
     }
 }
