@@ -121,8 +121,28 @@ pub enum LendingBridgeError {
     PostOperationUnhealthy,
     #[error("market total_borrowed arithmetic overflow")]
     TotalBorrowedOverflow,
+    #[error("liquidation called on a healthy position (HF >= 1.0)")]
+    PositionHealthy,
     #[error("lending compute error: {0}")]
     Lending(LendingError),
+}
+
+/// Result of [`LiveRethEvmBridge::lending_liquidate`] (Stage 22b). Returned
+/// for both EVM-side liquidator-bot use (via the `princeps_lending_liquidate`
+/// precompile) and downstream observability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LiquidationResult {
+    /// Nominal debt amount actually repaid (capped at the target's
+    /// outstanding nominal debt).
+    pub actual_repay: u128,
+    /// Collateral seized by the liquidator (in collateral asset units),
+    /// capped at the target's available collateral.
+    pub actual_seized: u128,
+    /// Target position's health factor AFTER the liquidation, RAY-scaled.
+    /// `>= RAY` means the partial liquidation restored health;
+    /// `< RAY` means the target is still liquidatable (partial liquidation
+    /// didn't catch up).
+    pub target_hf_after: u128,
 }
 
 impl From<LendingError> for LendingBridgeError {
@@ -510,6 +530,103 @@ impl<P> LiveRethEvmBridge<P> {
         // total_borrowed decreases by the nominal amount that was actually repaid.
         market.total_borrowed = market.total_borrowed.saturating_sub(actual_repaid);
         Ok(actual_repaid)
+    }
+
+    /// Liquidate `target`'s lending position in `market_id` (Stage 22b).
+    ///
+    /// Liquidator repays up to `repay_amount` of `target`'s debt and
+    /// receives `(repay × debt_price × (1 + bonus)) / collateral_price`
+    /// in collateral. The bonus comes from `market.liquidation_bonus`.
+    ///
+    /// Token movement (liquidator pays repay, receives collateral) is the
+    /// EVM caller's responsibility — this method only mutates lending state.
+    /// The precompile (Stage 22b) sits on top and wires both halves together
+    /// against the bridge's `accounts` map.
+    ///
+    /// Returns the actual amounts (capped at outstanding debt / available
+    /// collateral) plus the target's post-liquidation health factor.
+    ///
+    /// Rejects if:
+    /// - Target position doesn't exist (no debt to liquidate)
+    /// - Market doesn't exist
+    /// - Target is healthy (HF >= 1.0)
+    pub fn lending_liquidate(
+        &self,
+        _liquidator: AccountId,
+        target: AccountId,
+        market_id: MarketId,
+        repay_amount: u128,
+        collateral_price: u128,
+        debt_price: u128,
+    ) -> Result<LiquidationResult, LendingBridgeError> {
+        let mut markets = self.markets.lock().expect("markets mutex poisoned");
+        let market = markets
+            .get_mut(&market_id)
+            .ok_or(LendingBridgeError::UnknownMarket)?;
+        let market_snapshot = market.clone();
+
+        let mut positions = self.positions.lock().expect("positions mutex poisoned");
+        let target_key = (target, market_id);
+        let target_position = positions
+            .get(&target_key)
+            .cloned()
+            .ok_or(LendingBridgeError::Lending(LendingError::NoOutstandingDebt))?;
+
+        // 1. Verify target is liquidatable (HF < 1.0)
+        let hf_before = compute_health_factor(
+            &target_position,
+            &market_snapshot,
+            collateral_price,
+            debt_price,
+        );
+        if hf_before >= LendingIndex::RAY {
+            return Err(LendingBridgeError::PositionHealthy);
+        }
+
+        // 2. Compute actual repay (capped at outstanding nominal debt)
+        let nominal_debt = target_position.nominal_debt(market_snapshot.borrow_index);
+        let actual_repay = repay_amount.min(nominal_debt);
+        if actual_repay == 0 {
+            return Err(LendingBridgeError::Lending(LendingError::NoOutstandingDebt));
+        }
+
+        // 3. Compute collateral seizure with bonus
+        //    quote_value = actual_repay × debt_price
+        //    bonus_value = quote_value × bonus_bps / 10_000
+        //    total_quote = quote_value + bonus_value
+        //    seized_collateral = total_quote / collateral_price
+        let bonus_bps = u128::from(market_snapshot.liquidation_bonus.0);
+        let quote_value = actual_repay.saturating_mul(debt_price);
+        let bonus_value = quote_value.saturating_mul(bonus_bps) / 10_000;
+        let total_quote = quote_value.saturating_add(bonus_value);
+        let seized_collateral = if collateral_price == 0 {
+            0
+        } else {
+            total_quote / collateral_price
+        };
+        let actual_seized = seized_collateral.min(target_position.collateral_amount);
+
+        // 4. Apply mutations to a clone of the target
+        let mut target_after = target_position.clone();
+        princeps_lending::repay(&mut target_after, actual_repay, market_snapshot.borrow_index)?;
+        target_after.collateral_amount = target_after.collateral_amount.saturating_sub(actual_seized);
+
+        let hf_after = compute_health_factor(
+            &target_after,
+            &market_snapshot,
+            collateral_price,
+            debt_price,
+        );
+
+        // 5. Commit
+        positions.insert(target_key, target_after);
+        market.total_borrowed = market.total_borrowed.saturating_sub(actual_repay);
+
+        Ok(LiquidationResult {
+            actual_repay,
+            actual_seized,
+            target_hf_after: hf_after,
+        })
     }
 
     /// Scan all lending positions for health < 1.0 (Stage 20c).
@@ -2709,6 +2826,68 @@ mod tests {
         bridge.lending_tick(1_000);
         let after = bridge.markets_snapshot()[0].1.borrow_index;
         assert!(after.0 > before.0, "borrow_index should grow after tick");
+    }
+
+    // ===== Stage 22b: lending_liquidate bridge tests =====
+
+    #[test]
+    fn lending_liquidate_rejects_healthy_position() {
+        let bridge = bridge_with_market(MarketId(0), 1_000_000);
+        let target = AccountId(1);
+        let liquidator = AccountId(2);
+        bridge.lending_deposit_collateral(target, MarketId(0), 1_000).unwrap();
+        bridge.lending_borrow(target, MarketId(0), 500, 1, 1).unwrap();
+        // HF = (1000 × 0.95) / 500 = 1.9 → healthy
+        let result = bridge.lending_liquidate(liquidator, target, MarketId(0), 100, 1, 1);
+        assert_eq!(result, Err(LendingBridgeError::PositionHealthy));
+    }
+
+    #[test]
+    fn lending_liquidate_succeeds_on_unhealthy_position() {
+        // Target deposits 100 USDC, borrows 90 ETH at price 1.
+        // HF = (100 × 0.95) / 90 ≈ 1.055 → healthy.
+        // Now debt price doubles to 2; HF = (100 × 0.95) / 180 ≈ 0.527 → liquidatable.
+        let bridge = bridge_with_market(MarketId(0), 1_000_000);
+        let target = AccountId(1);
+        let liquidator = AccountId(2);
+        bridge.lending_deposit_collateral(target, MarketId(0), 100).unwrap();
+        bridge.lending_borrow(target, MarketId(0), 90, 1, 1).unwrap();
+
+        // Liquidate 50 of the 90 outstanding debt @ (1, 2) prices.
+        // seized = 50 × 2 × (1 + 0.05) / 1 = 105 → capped at target.collateral=100
+        let result = bridge
+            .lending_liquidate(liquidator, target, MarketId(0), 50, 1, 2)
+            .unwrap();
+        assert_eq!(result.actual_repay, 50);
+        assert_eq!(result.actual_seized, 100); // capped at available collateral
+
+        let positions = bridge.positions_snapshot();
+        let pos = &positions[0].1;
+        assert_eq!(pos.collateral_amount, 0);
+        assert_eq!(pos.scaled_debt, 40);
+        let markets = bridge.markets_snapshot();
+        assert_eq!(markets[0].1.total_borrowed, 40);
+    }
+
+    #[test]
+    fn lending_liquidate_caps_repay_at_outstanding_debt() {
+        let bridge = bridge_with_market(MarketId(0), 1_000_000);
+        let target = AccountId(1);
+        bridge.lending_deposit_collateral(target, MarketId(0), 100).unwrap();
+        bridge.lending_borrow(target, MarketId(0), 90, 1, 1).unwrap();
+
+        // Try to repay way more than outstanding (90) — should cap.
+        let result = bridge
+            .lending_liquidate(AccountId(2), target, MarketId(0), 1_000_000, 1, 2)
+            .unwrap();
+        assert_eq!(result.actual_repay, 90);
+    }
+
+    #[test]
+    fn lending_liquidate_unknown_market_errors() {
+        let bridge = LiveRethEvmBridge::new((), dev_chain_spec());
+        let result = bridge.lending_liquidate(AccountId(1), AccountId(2), MarketId(999), 100, 1, 1);
+        assert_eq!(result, Err(LendingBridgeError::UnknownMarket));
     }
 
     #[test]

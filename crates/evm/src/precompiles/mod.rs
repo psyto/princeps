@@ -148,6 +148,20 @@ pub const PRINCEPS_LENDING_REPAY: Address =
 pub const PRINCEPS_LENDING_WITHDRAW_COLLATERAL: Address =
     address!("0x0000000000000000000000000000000000000c22");
 
+/// `princeps_lending_liquidate` precompile address (Stage 22b).
+///
+/// Solidity call shape (192-byte input):
+/// `call(gas, 0x...0c24, calldata=(uint64 liquidator, uint64 target, uint32 market_id, uint128 repay_amount, uint128 collateral_price, uint128 debt_price), ...) → uint256 actual_repay`
+///
+/// Returns the nominal debt actually repaid (low 16 bytes of u256), capped
+/// at the target's outstanding debt and zero-if-rejected. Liquidator
+/// pays `actual_repay` of underlying and receives
+/// `actual_repay × debt_price × (1 + bonus) / collateral_price` of
+/// collateral asset. Token transfers between liquidator and pool are the
+/// EVM caller's responsibility — this precompile only mutates lending state.
+pub const PRINCEPS_LENDING_LIQUIDATE: Address =
+    address!("0x0000000000000000000000000000000000000c24");
+
 /// `princeps_lending_health` precompile address (Stage 21e). Read-only;
 /// can be invoked via `staticcall`.
 ///
@@ -1012,6 +1026,122 @@ pub(crate) fn lending_withdraw(
     ))
 }
 
+/// `princeps_lending_liquidate` precompile handler (Stage 22b).
+#[allow(clippy::unnecessary_wraps)]
+pub(crate) fn lending_liquidate(
+    input: &[u8],
+    _gas_limit: u64,
+    _reservoir: u64,
+) -> PrecompileResult {
+    let zero_out = vec![0u8; 32];
+    if input.len() < 192 {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    }
+    let _liquidator_id = u64_from_be_chunk(&input[0..32]);
+    let target_id = u64_from_be_chunk(&input[32..64]);
+    let market_id = u32_from_be_chunk(&input[64..96]);
+    let repay_amount = u128_from_be_chunk(&input[96..128]);
+    let collateral_price = u128_from_be_chunk(&input[128..160]);
+    let debt_price = u128_from_be_chunk(&input[160..192]);
+
+    let markets_handle = MARKETS_STATE.read().expect("MARKETS_STATE rwlock poisoned");
+    let positions_handle = POSITIONS_STATE
+        .read()
+        .expect("POSITIONS_STATE rwlock poisoned");
+    let (Some(markets), Some(positions)) = (markets_handle.as_ref(), positions_handle.as_ref())
+    else {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    };
+
+    let mut markets_guard = markets.lock().expect("markets mutex poisoned");
+    let Some(market) = markets_guard.get_mut(&MarketId(market_id)) else {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    };
+    let market_snapshot = market.clone();
+
+    let mut positions_guard = positions.lock().expect("positions mutex poisoned");
+    let target_key = (AccountId(target_id), MarketId(market_id));
+    let Some(target_position) = positions_guard.get(&target_key).cloned() else {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    };
+
+    // Health check
+    let hf = lending_compute_health_factor(
+        &target_position,
+        &market_snapshot,
+        collateral_price,
+        debt_price,
+    );
+    if hf >= LendingIndex::RAY {
+        // Healthy → reject
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    }
+
+    let nominal_debt = target_position.nominal_debt(market_snapshot.borrow_index);
+    let actual_repay = repay_amount.min(nominal_debt);
+    if actual_repay == 0 {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    }
+
+    // Seize collateral with bonus
+    let bonus_bps = u128::from(market_snapshot.liquidation_bonus.0);
+    let quote_value = actual_repay.saturating_mul(debt_price);
+    let bonus_value = quote_value.saturating_mul(bonus_bps) / 10_000;
+    let total_quote = quote_value.saturating_add(bonus_value);
+    let seized_collateral = if collateral_price == 0 {
+        0
+    } else {
+        total_quote / collateral_price
+    };
+    let actual_seized = seized_collateral.min(target_position.collateral_amount);
+
+    // Apply
+    let mut target_after = target_position;
+    if lending_position_repay(&mut target_after, actual_repay, market_snapshot.borrow_index)
+        .is_err()
+    {
+        return Ok(PrecompileOutput::new(
+            LENDING_BASE_GAS_COST,
+            Bytes::from(zero_out),
+            0,
+        ));
+    }
+    target_after.collateral_amount = target_after.collateral_amount.saturating_sub(actual_seized);
+
+    positions_guard.insert(target_key, target_after);
+    market.total_borrowed = market.total_borrowed.saturating_sub(actual_repay);
+
+    Ok(PrecompileOutput::new(
+        LENDING_BASE_GAS_COST,
+        Bytes::from(u128_in_low_word(actual_repay)),
+        0,
+    ))
+}
+
 /// `princeps_lending_health` precompile handler (Stage 21e). Read-only.
 #[allow(clippy::unnecessary_wraps)]
 pub(crate) fn lending_health(
@@ -1126,6 +1256,11 @@ pub fn princeps_precompiles(base: &Precompiles) -> Precompiles {
             PrecompileId::custom("princeps_lending_withdraw_collateral"),
             PRINCEPS_LENDING_WITHDRAW_COLLATERAL,
             lending_withdraw,
+        ),
+        Precompile::new(
+            PrecompileId::custom("princeps_lending_liquidate"),
+            PRINCEPS_LENDING_LIQUIDATE,
+            lending_liquidate,
         ),
         Precompile::new(
             PrecompileId::custom("princeps_lending_health"),
@@ -1794,6 +1929,47 @@ mod tests {
         let market = markets_guard.get(&MarketId(0)).unwrap();
         assert_eq!(market.total_borrowed, 300);
         drop(markets_guard);
+
+        uninstall_lending_markets();
+        uninstall_lending_positions();
+    }
+
+    #[test]
+    fn lending_liquidate_precompile_e2e() {
+        let _g = TEST_SERIALIZER
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        uninstall_lending_markets();
+        uninstall_lending_positions();
+
+        let (markets, positions) = make_test_lending_market();
+        install_lending_markets(Arc::clone(&markets));
+        install_lending_positions(Arc::clone(&positions));
+
+        // Target=1 deposits 100, borrows 90 (healthy at price 1).
+        lending_deposit(&encode_3_chunk_input(1, 0, 100), 100_000, 0).unwrap();
+        lending_borrow(&encode_5_chunk_input(1, 0, 90, 1, 1), 100_000, 0).unwrap();
+
+        // Now liquidator=2 calls with debt_price=2 (target unhealthy).
+        // Encode 6-chunk input: liquidator, target, market, repay, coll_price, debt_price
+        let mut input = vec![0u8; 192];
+        input[24..32].copy_from_slice(&2u64.to_be_bytes()); // liquidator
+        input[56..64].copy_from_slice(&1u64.to_be_bytes()); // target
+        input[92..96].copy_from_slice(&0u32.to_be_bytes()); // market
+        input[112..128].copy_from_slice(&50u128.to_be_bytes()); // repay
+        input[144..160].copy_from_slice(&1u128.to_be_bytes()); // coll_price
+        input[176..192].copy_from_slice(&2u128.to_be_bytes()); // debt_price
+
+        let out = lending_liquidate(&input, 100_000, 0).unwrap();
+        let actual_repay = decode_u128_from_low_word(&out.bytes);
+        assert_eq!(actual_repay, 50);
+
+        let positions_guard = positions.lock().unwrap();
+        let pos = positions_guard
+            .get(&(AccountId(1), MarketId(0)))
+            .expect("position exists");
+        assert_eq!(pos.scaled_debt, 40);
+        drop(positions_guard);
 
         uninstall_lending_markets();
         uninstall_lending_positions();
