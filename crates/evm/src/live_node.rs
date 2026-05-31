@@ -38,7 +38,8 @@ use princeps_clob::{AccountId, Book, Fill, FillResult, Order};
 use princeps_consensus::bridge::{BridgeError, ConsensusBridge};
 use princeps_funding::Notional;
 use princeps_lending::{
-    accrue_interest, compute_health_factor, InterestAccrualReport, Market, MarketId, Position,
+    accrue_interest, compute_health_factor, deposit_collateral, repay, withdraw_collateral,
+    Index as LendingIndex, InterestAccrualReport, LendingError, Market, MarketId, Position,
 };
 use princeps_types::{BlockHash, ExecutedBlock, PayloadAttrs, PayloadId, PayloadStatus};
 use reth_chainspec::{ChainSpec, EthChainSpec};
@@ -102,6 +103,32 @@ pub struct LiveRethEvmBridge<P> {
     /// (AccountId-then-MarketId) gives stable per-account grouping
     /// without requiring a secondary index.
     positions: Arc<Mutex<BTreeMap<(AccountId, MarketId), Position>>>,
+}
+
+/// Bridge-layer errors for lending operations (Stage 20d).
+///
+/// Wraps [`princeps_lending::LendingError`] (the pure-compute error
+/// surface) plus bridge-only conditions like unknown market, insufficient
+/// pool liquidity, and post-operation unhealthy state. The bridge maps
+/// these into precompile revert codes in Stage 21.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum LendingBridgeError {
+    #[error("unknown market id")]
+    UnknownMarket,
+    #[error("borrow would exceed market liquidity (total_borrowed > total_supplied)")]
+    InsufficientLiquidity,
+    #[error("post-borrow / post-withdraw health factor below 1.0")]
+    PostOperationUnhealthy,
+    #[error("market total_borrowed arithmetic overflow")]
+    TotalBorrowedOverflow,
+    #[error("lending compute error: {0}")]
+    Lending(LendingError),
+}
+
+impl From<LendingError> for LendingBridgeError {
+    fn from(e: LendingError) -> Self {
+        LendingBridgeError::Lending(e)
+    }
 }
 
 /// Result of [`LiveRethEvmBridge::lending_tick`] (Stage 20c).
@@ -346,6 +373,139 @@ impl<P> LiveRethEvmBridge<P> {
             block: current_block,
             interest_reports,
         }
+    }
+
+    /// Deposit `amount` of collateral to `(account, market_id)` (Stage 20d).
+    /// Creates the position if it doesn't yet exist. No health check —
+    /// adding collateral can only improve health.
+    pub fn lending_deposit_collateral(
+        &self,
+        account: AccountId,
+        market_id: MarketId,
+        amount: u128,
+    ) -> Result<(), LendingBridgeError> {
+        let markets = self.markets.lock().expect("markets mutex poisoned");
+        if !markets.contains_key(&market_id) {
+            return Err(LendingBridgeError::UnknownMarket);
+        }
+        drop(markets);
+
+        let mut positions = self.positions.lock().expect("positions mutex poisoned");
+        let position = positions
+            .entry((account, market_id))
+            .or_insert_with(|| Position::empty(market_id));
+        deposit_collateral(position, amount)?;
+        Ok(())
+    }
+
+    /// Withdraw `amount` of collateral from `(account, market_id)` (Stage 20d).
+    /// Health-checked via caller-supplied prices: rejects if post-withdraw
+    /// health factor < 1.0. Caller (bridge commit path / precompile) pulls
+    /// prices from the oracle and passes them in.
+    pub fn lending_withdraw_collateral(
+        &self,
+        account: AccountId,
+        market_id: MarketId,
+        amount: u128,
+        collateral_price: u128,
+        debt_price: u128,
+    ) -> Result<(), LendingBridgeError> {
+        // Lock-ordering: markets first, then positions. Same order
+        // everywhere in this impl block — prevents deadlock.
+        let markets = self.markets.lock().expect("markets mutex poisoned");
+        let market = markets
+            .get(&market_id)
+            .ok_or(LendingBridgeError::UnknownMarket)?
+            .clone();
+        drop(markets);
+
+        let mut positions = self.positions.lock().expect("positions mutex poisoned");
+        let Some(existing) = positions.get(&(account, market_id)) else {
+            return Err(LendingError::InsufficientCollateral.into());
+        };
+
+        // Simulate the withdraw on a clone, health-check, then commit.
+        let mut hypothetical = existing.clone();
+        withdraw_collateral(&mut hypothetical, amount)?;
+        let hf = compute_health_factor(&hypothetical, &market, collateral_price, debt_price);
+        if hf < LendingIndex::RAY {
+            return Err(LendingBridgeError::PostOperationUnhealthy);
+        }
+        positions.insert((account, market_id), hypothetical);
+        Ok(())
+    }
+
+    /// Borrow `amount` of underlying from `(account, market_id)` (Stage 20d).
+    /// Health-checked via caller-supplied prices. Updates `market.total_borrowed`.
+    /// Rejects if pool would be over-borrowed or post-borrow health < 1.0.
+    pub fn lending_borrow(
+        &self,
+        account: AccountId,
+        market_id: MarketId,
+        amount: u128,
+        collateral_price: u128,
+        debt_price: u128,
+    ) -> Result<(), LendingBridgeError> {
+        let mut markets = self.markets.lock().expect("markets mutex poisoned");
+        let market = markets
+            .get_mut(&market_id)
+            .ok_or(LendingBridgeError::UnknownMarket)?;
+
+        // Liquidity check
+        let new_borrowed = market
+            .total_borrowed
+            .checked_add(amount)
+            .ok_or(LendingBridgeError::TotalBorrowedOverflow)?;
+        if new_borrowed > market.total_supplied {
+            return Err(LendingBridgeError::InsufficientLiquidity);
+        }
+
+        let mut positions = self.positions.lock().expect("positions mutex poisoned");
+        let existing = positions
+            .get(&(account, market_id))
+            .cloned()
+            .unwrap_or_else(|| Position::empty(market_id));
+
+        // Simulate borrow on a clone
+        let mut hypothetical = existing;
+        princeps_lending::borrow(&mut hypothetical, amount, market.borrow_index)?;
+
+        // Health check on hypothetical
+        let hf = compute_health_factor(&hypothetical, market, collateral_price, debt_price);
+        if hf < LendingIndex::RAY {
+            return Err(LendingBridgeError::PostOperationUnhealthy);
+        }
+
+        // Commit
+        positions.insert((account, market_id), hypothetical);
+        market.total_borrowed = new_borrowed;
+        Ok(())
+    }
+
+    /// Repay up to `amount` of debt on `(account, market_id)` (Stage 20d).
+    /// Returns the actual nominal repaid (capped at current debt). Updates
+    /// `market.total_borrowed`. No health check — repaying can only improve
+    /// health.
+    pub fn lending_repay(
+        &self,
+        account: AccountId,
+        market_id: MarketId,
+        amount: u128,
+    ) -> Result<u128, LendingBridgeError> {
+        let mut markets = self.markets.lock().expect("markets mutex poisoned");
+        let market = markets
+            .get_mut(&market_id)
+            .ok_or(LendingBridgeError::UnknownMarket)?;
+
+        let mut positions = self.positions.lock().expect("positions mutex poisoned");
+        let position = positions
+            .get_mut(&(account, market_id))
+            .ok_or(LendingBridgeError::Lending(LendingError::NoOutstandingDebt))?;
+
+        let actual_repaid = repay(position, amount, market.borrow_index)?;
+        // total_borrowed decreases by the nominal amount that was actually repaid.
+        market.total_borrowed = market.total_borrowed.saturating_sub(actual_repaid);
+        Ok(actual_repaid)
     }
 
     /// Scan all lending positions for health < 1.0 (Stage 20c).
@@ -2371,5 +2531,196 @@ mod tests {
         uninstall_fill_sink();
         uninstall_clob();
         drop(handle);
+    }
+
+    // ===== Stage 20d: lending bridge methods =====
+
+    fn make_test_market(market_id: MarketId, total_supplied: u128) -> Market {
+        use princeps_lending::{AssetId, Bps, IrmParams};
+        let mut m = Market::new(
+            market_id,
+            AssetId(1), // ETH underlying
+            AssetId(0), // USDC collateral
+            IrmParams {
+                base_rate_per_block: 0,
+                slope_below_kink_per_block: LendingIndex::RAY / 10_000,
+                slope_above_kink_per_block: LendingIndex::RAY / 1_000,
+                kink_bps: Bps(8_000),
+            },
+            Bps(9_500), // LT 95%
+            Bps(500),
+            Bps(1_000),
+            0,
+        );
+        m.total_supplied = total_supplied;
+        m
+    }
+
+    fn bridge_with_market(market_id: MarketId, total_supplied: u128) -> LiveRethEvmBridge<()> {
+        let bridge = LiveRethEvmBridge::new((), dev_chain_spec());
+        bridge.with_markets_mut(|m| {
+            m.insert(market_id, make_test_market(market_id, total_supplied));
+        });
+        bridge
+    }
+
+    #[test]
+    fn lending_deposit_creates_position_on_first_call() {
+        let bridge = bridge_with_market(MarketId(0), 1_000_000);
+        bridge
+            .lending_deposit_collateral(AccountId(42), MarketId(0), 500)
+            .unwrap();
+        let positions = bridge.positions_snapshot();
+        assert_eq!(positions.len(), 1);
+        assert_eq!(positions[0].0, (AccountId(42), MarketId(0)));
+        assert_eq!(positions[0].1.collateral_amount, 500);
+    }
+
+    #[test]
+    fn lending_deposit_accumulates_on_subsequent_calls() {
+        let bridge = bridge_with_market(MarketId(0), 1_000_000);
+        let a = AccountId(1);
+        bridge.lending_deposit_collateral(a, MarketId(0), 100).unwrap();
+        bridge.lending_deposit_collateral(a, MarketId(0), 200).unwrap();
+        let positions = bridge.positions_snapshot();
+        assert_eq!(positions.len(), 1);
+        assert_eq!(positions[0].1.collateral_amount, 300);
+    }
+
+    #[test]
+    fn lending_deposit_unknown_market_errors() {
+        let bridge = LiveRethEvmBridge::new((), dev_chain_spec());
+        let err = bridge.lending_deposit_collateral(AccountId(1), MarketId(999), 100);
+        assert_eq!(err, Err(LendingBridgeError::UnknownMarket));
+    }
+
+    #[test]
+    fn lending_borrow_succeeds_when_collateral_covers_debt() {
+        // 1000 USDC collateral, 500 ETH debt, LT 95%, prices both 1
+        // HF = (1000 × 0.95) / 500 = 1.9 (healthy)
+        let bridge = bridge_with_market(MarketId(0), 1_000_000);
+        let a = AccountId(1);
+        bridge.lending_deposit_collateral(a, MarketId(0), 1_000).unwrap();
+        bridge.lending_borrow(a, MarketId(0), 500, 1, 1).unwrap();
+
+        let positions = bridge.positions_snapshot();
+        assert_eq!(positions[0].1.collateral_amount, 1_000);
+        // borrow_index = 1.0 at construction → scaled_debt == nominal
+        assert_eq!(positions[0].1.scaled_debt, 500);
+
+        let markets = bridge.markets_snapshot();
+        assert_eq!(markets[0].1.total_borrowed, 500);
+    }
+
+    #[test]
+    fn lending_borrow_rejects_post_unhealthy() {
+        // 100 USDC collateral, try to borrow 1000 ETH → HF way below 1
+        let bridge = bridge_with_market(MarketId(0), 1_000_000);
+        let a = AccountId(1);
+        bridge.lending_deposit_collateral(a, MarketId(0), 100).unwrap();
+        let err = bridge.lending_borrow(a, MarketId(0), 1_000, 1, 1);
+        assert_eq!(err, Err(LendingBridgeError::PostOperationUnhealthy));
+        // State unchanged (rollback via simulate-then-commit)
+        assert_eq!(bridge.positions_snapshot()[0].1.scaled_debt, 0);
+        assert_eq!(bridge.markets_snapshot()[0].1.total_borrowed, 0);
+    }
+
+    #[test]
+    fn lending_borrow_rejects_insufficient_liquidity() {
+        // Pool has 100 ETH, user tries to borrow 200
+        let bridge = bridge_with_market(MarketId(0), 100);
+        let a = AccountId(1);
+        bridge.lending_deposit_collateral(a, MarketId(0), 10_000).unwrap();
+        let err = bridge.lending_borrow(a, MarketId(0), 200, 1, 1);
+        assert_eq!(err, Err(LendingBridgeError::InsufficientLiquidity));
+    }
+
+    #[test]
+    fn lending_repay_reduces_debt_and_market_total() {
+        let bridge = bridge_with_market(MarketId(0), 1_000_000);
+        let a = AccountId(1);
+        bridge.lending_deposit_collateral(a, MarketId(0), 1_000).unwrap();
+        bridge.lending_borrow(a, MarketId(0), 500, 1, 1).unwrap();
+
+        let repaid = bridge.lending_repay(a, MarketId(0), 200).unwrap();
+        assert_eq!(repaid, 200);
+        assert_eq!(bridge.positions_snapshot()[0].1.scaled_debt, 300);
+        assert_eq!(bridge.markets_snapshot()[0].1.total_borrowed, 300);
+    }
+
+    #[test]
+    fn lending_repay_caps_at_outstanding_debt() {
+        let bridge = bridge_with_market(MarketId(0), 1_000_000);
+        let a = AccountId(1);
+        bridge.lending_deposit_collateral(a, MarketId(0), 1_000).unwrap();
+        bridge.lending_borrow(a, MarketId(0), 500, 1, 1).unwrap();
+
+        let repaid = bridge.lending_repay(a, MarketId(0), 1_000_000).unwrap();
+        assert_eq!(repaid, 500);
+        assert_eq!(bridge.positions_snapshot()[0].1.scaled_debt, 0);
+        assert_eq!(bridge.markets_snapshot()[0].1.total_borrowed, 0);
+    }
+
+    #[test]
+    fn lending_withdraw_collateral_succeeds_when_position_stays_healthy() {
+        let bridge = bridge_with_market(MarketId(0), 1_000_000);
+        let a = AccountId(1);
+        bridge.lending_deposit_collateral(a, MarketId(0), 1_000).unwrap();
+        bridge.lending_borrow(a, MarketId(0), 500, 1, 1).unwrap();
+        // Post-withdraw: 900 coll vs 500 debt → HF 1.71 (healthy)
+        bridge
+            .lending_withdraw_collateral(a, MarketId(0), 100, 1, 1)
+            .unwrap();
+        assert_eq!(bridge.positions_snapshot()[0].1.collateral_amount, 900);
+    }
+
+    #[test]
+    fn lending_withdraw_collateral_blocked_when_would_break_health() {
+        let bridge = bridge_with_market(MarketId(0), 1_000_000);
+        let a = AccountId(1);
+        bridge.lending_deposit_collateral(a, MarketId(0), 1_000).unwrap();
+        bridge.lending_borrow(a, MarketId(0), 800, 1, 1).unwrap();
+        // Try to withdraw 800: 200 coll vs 800 debt → HF 0.24
+        let err = bridge.lending_withdraw_collateral(a, MarketId(0), 800, 1, 1);
+        assert_eq!(err, Err(LendingBridgeError::PostOperationUnhealthy));
+        assert_eq!(bridge.positions_snapshot()[0].1.collateral_amount, 1_000);
+    }
+
+    #[test]
+    fn lending_tick_no_markets_returns_empty() {
+        let bridge = LiveRethEvmBridge::new((), dev_chain_spec());
+        let report = bridge.lending_tick(100);
+        assert_eq!(report.block, 100);
+        assert!(report.interest_reports.is_empty());
+    }
+
+    #[test]
+    fn lending_tick_advances_borrow_index_when_pool_is_borrowed() {
+        let bridge = bridge_with_market(MarketId(0), 1_000_000);
+        let a = AccountId(1);
+        bridge.lending_deposit_collateral(a, MarketId(0), 10_000).unwrap();
+        bridge.lending_borrow(a, MarketId(0), 5_000, 1, 1).unwrap();
+
+        let before = bridge.markets_snapshot()[0].1.borrow_index;
+        bridge.lending_tick(1_000);
+        let after = bridge.markets_snapshot()[0].1.borrow_index;
+        assert!(after.0 > before.0, "borrow_index should grow after tick");
+    }
+
+    #[test]
+    fn scan_lending_health_flags_unhealthy_position() {
+        let bridge = bridge_with_market(MarketId(0), 1_000_000);
+        let a = AccountId(1);
+        bridge.lending_deposit_collateral(a, MarketId(0), 100).unwrap();
+        bridge.lending_borrow(a, MarketId(0), 90, 1, 1).unwrap();
+        // HF at price (1,1): (100 × 0.95) / 90 ≈ 1.055 (healthy)
+        // Now ETH price doubles: HF = (100 × 0.95) / 180 ≈ 0.527 (underwater)
+        let mut prices: BTreeMap<MarketId, (u128, u128)> = BTreeMap::new();
+        prices.insert(MarketId(0), (1, 2));
+        let report = bridge.scan_lending_health(&prices);
+        assert_eq!(report.scanned, 1);
+        assert_eq!(report.flagged.len(), 1);
+        assert_eq!(report.flagged[0].0, (a, MarketId(0)));
+        assert!(report.flagged[0].1 < LendingIndex::RAY);
     }
 }

@@ -16,6 +16,7 @@ princeps-funding           = { workspace = true }
 princeps-lending           = { workspace = true }
 async-trait              = { workspace = true }
 eyre                     = { workspace = true }
+thiserror                = { workspace = true }
 alloy-primitives         = { workspace = true, features = ["serde"] }
 alloy-consensus          = { workspace = true, features = ["serde"] }
 serde                    = { workspace = true }
