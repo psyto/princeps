@@ -1,25 +1,25 @@
 use informalsystems_malachitebft_core_types::{Validator, ValidatorSet, VotingPower};
 use informalsystems_malachitebft_signing_ed25519::PublicKey;
 
-use crate::context::OpenHlContext;
-use crate::types::OpenHlAddress;
+use crate::context::PrincepsContext;
+use crate::types::PrincepsAddress;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OpenHlValidator {
-    pub address: OpenHlAddress,
+pub struct PrincepsValidator {
+    pub address: PrincepsAddress,
     pub public_key: PublicKey,
     pub voting_power: VotingPower,
 }
 
-impl OpenHlValidator {
+impl PrincepsValidator {
     #[must_use]
-    pub const fn new(address: OpenHlAddress, public_key: PublicKey, voting_power: VotingPower) -> Self {
+    pub const fn new(address: PrincepsAddress, public_key: PublicKey, voting_power: VotingPower) -> Self {
         Self { address, public_key, voting_power }
     }
 }
 
-impl Validator<OpenHlContext> for OpenHlValidator {
-    fn address(&self) -> &OpenHlAddress {
+impl Validator<PrincepsContext> for PrincepsValidator {
+    fn address(&self) -> &PrincepsAddress {
         &self.address
     }
 
@@ -34,12 +34,12 @@ impl Validator<OpenHlContext> for OpenHlValidator {
 
 /// A validator set, kept sorted by (`voting_power` desc, address asc).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OpenHlValidatorSet(Vec<OpenHlValidator>);
+pub struct PrincepsValidatorSet(Vec<PrincepsValidator>);
 
-impl OpenHlValidatorSet {
+impl PrincepsValidatorSet {
     /// Construct a validator set and enforce the canonical sort order.
     #[must_use]
-    pub fn new(mut validators: Vec<OpenHlValidator>) -> Self {
+    pub fn new(mut validators: Vec<PrincepsValidator>) -> Self {
         validators.sort_by(|a, b| {
             b.voting_power
                 .cmp(&a.voting_power)
@@ -49,12 +49,12 @@ impl OpenHlValidatorSet {
     }
 
     #[must_use]
-    pub fn validators(&self) -> &[OpenHlValidator] {
+    pub fn validators(&self) -> &[PrincepsValidator] {
         &self.0
     }
 }
 
-impl ValidatorSet<OpenHlContext> for OpenHlValidatorSet {
+impl ValidatorSet<PrincepsContext> for PrincepsValidatorSet {
     fn count(&self) -> usize {
         self.0.len()
     }
@@ -63,11 +63,11 @@ impl ValidatorSet<OpenHlContext> for OpenHlValidatorSet {
         self.0.iter().map(|v| v.voting_power).sum()
     }
 
-    fn get_by_address(&self, address: &OpenHlAddress) -> Option<&OpenHlValidator> {
+    fn get_by_address(&self, address: &PrincepsAddress) -> Option<&PrincepsValidator> {
         self.0.iter().find(|v| &v.address == address)
     }
 
-    fn get_by_index(&self, index: usize) -> Option<&OpenHlValidator> {
+    fn get_by_index(&self, index: usize) -> Option<&PrincepsValidator> {
         self.0.get(index)
     }
 }

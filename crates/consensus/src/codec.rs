@@ -1,4 +1,4 @@
-//! JSON codec for the OpenHL consensus messages.
+//! JSON codec for the Princeps consensus messages.
 //!
 //! Each `Codec<T>` impl serializes a Malachite message into a JSON blob and
 //! back. Several Malachite types (`SignedMessage`, `PolkaCertificate`,
@@ -29,13 +29,13 @@ use princeps_types::BlockHash;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::context::OpenHlContext;
+use crate::context::PrincepsContext;
 use crate::types::{
-    OpenHlAddress, OpenHlHeight, OpenHlProposal, OpenHlProposalPart, OpenHlValue, OpenHlVote,
+    PrincepsAddress, PrincepsHeight, PrincepsProposal, PrincepsProposalPart, PrincepsValue, PrincepsVote,
 };
 
 #[derive(Copy, Clone, Debug, Default)]
-pub struct OpenHlCodec;
+pub struct PrincepsCodec;
 
 #[derive(Debug, Error)]
 pub enum CodecError {
@@ -47,14 +47,14 @@ pub enum CodecError {
 
 // ---- ProposalPart (Stage 18a: now carries the proposer's block bytes) ----
 
-impl Codec<OpenHlProposalPart> for OpenHlCodec {
+impl Codec<PrincepsProposalPart> for PrincepsCodec {
     type Error = CodecError;
 
-    fn decode(&self, bytes: Bytes) -> Result<OpenHlProposalPart, Self::Error> {
+    fn decode(&self, bytes: Bytes) -> Result<PrincepsProposalPart, Self::Error> {
         Ok(serde_json::from_slice(&bytes)?)
     }
 
-    fn encode(&self, msg: &OpenHlProposalPart) -> Result<Bytes, Self::Error> {
+    fn encode(&self, msg: &PrincepsProposalPart) -> Result<Bytes, Self::Error> {
         Ok(Bytes::from(serde_json::to_vec(msg)?))
     }
 }
@@ -63,13 +63,13 @@ impl Codec<OpenHlProposalPart> for OpenHlCodec {
 
 #[derive(Serialize, Deserialize)]
 struct RawSignedVote {
-    message: OpenHlVote,
+    message: PrincepsVote,
     signature: Signature,
 }
 
 #[derive(Serialize, Deserialize)]
 struct RawSignedProposal {
-    message: OpenHlProposal,
+    message: PrincepsProposal,
     signature: Signature,
 }
 
@@ -79,8 +79,8 @@ enum RawSignedConsensusMsg {
     Proposal(RawSignedProposal),
 }
 
-impl From<SignedConsensusMsg<OpenHlContext>> for RawSignedConsensusMsg {
-    fn from(msg: SignedConsensusMsg<OpenHlContext>) -> Self {
+impl From<SignedConsensusMsg<PrincepsContext>> for RawSignedConsensusMsg {
+    fn from(msg: SignedConsensusMsg<PrincepsContext>) -> Self {
         match msg {
             SignedConsensusMsg::Vote(v) => Self::Vote(RawSignedVote {
                 message: v.message,
@@ -94,7 +94,7 @@ impl From<SignedConsensusMsg<OpenHlContext>> for RawSignedConsensusMsg {
     }
 }
 
-impl From<RawSignedConsensusMsg> for SignedConsensusMsg<OpenHlContext> {
+impl From<RawSignedConsensusMsg> for SignedConsensusMsg<PrincepsContext> {
     fn from(raw: RawSignedConsensusMsg) -> Self {
         match raw {
             RawSignedConsensusMsg::Vote(v) => {
@@ -107,15 +107,15 @@ impl From<RawSignedConsensusMsg> for SignedConsensusMsg<OpenHlContext> {
     }
 }
 
-impl Codec<SignedConsensusMsg<OpenHlContext>> for OpenHlCodec {
+impl Codec<SignedConsensusMsg<PrincepsContext>> for PrincepsCodec {
     type Error = CodecError;
 
-    fn decode(&self, bytes: Bytes) -> Result<SignedConsensusMsg<OpenHlContext>, Self::Error> {
+    fn decode(&self, bytes: Bytes) -> Result<SignedConsensusMsg<PrincepsContext>, Self::Error> {
         let raw: RawSignedConsensusMsg = serde_json::from_slice(&bytes)?;
         Ok(raw.into())
     }
 
-    fn encode(&self, msg: &SignedConsensusMsg<OpenHlContext>) -> Result<Bytes, Self::Error> {
+    fn encode(&self, msg: &SignedConsensusMsg<PrincepsContext>) -> Result<Bytes, Self::Error> {
         let raw = RawSignedConsensusMsg::from(msg.clone());
         Ok(Bytes::from(serde_json::to_vec(&raw)?))
     }
@@ -125,13 +125,13 @@ impl Codec<SignedConsensusMsg<OpenHlContext>> for OpenHlCodec {
 
 #[derive(Serialize, Deserialize)]
 struct RawPolkaSignature {
-    address: OpenHlAddress,
+    address: PrincepsAddress,
     signature: Signature,
 }
 
 #[derive(Serialize, Deserialize)]
 struct RawPolkaCertificate {
-    height: OpenHlHeight,
+    height: PrincepsHeight,
     round: Round,
     value_id: BlockHash,
     polka_signatures: Vec<RawPolkaSignature>,
@@ -141,13 +141,13 @@ struct RawPolkaCertificate {
 struct RawRoundSignature {
     vote_type: VoteType,
     value_id: NilOrVal<BlockHash>,
-    address: OpenHlAddress,
+    address: PrincepsAddress,
     signature: Signature,
 }
 
 #[derive(Serialize, Deserialize)]
 struct RawRoundCertificate {
-    height: OpenHlHeight,
+    height: PrincepsHeight,
     round: Round,
     cert_type: RoundCertificateType,
     round_signatures: Vec<RawRoundSignature>,
@@ -160,8 +160,8 @@ enum RawLivenessMsg {
     SkipRoundCertificate(RawRoundCertificate),
 }
 
-impl From<LivenessMsg<OpenHlContext>> for RawLivenessMsg {
-    fn from(msg: LivenessMsg<OpenHlContext>) -> Self {
+impl From<LivenessMsg<PrincepsContext>> for RawLivenessMsg {
+    fn from(msg: LivenessMsg<PrincepsContext>) -> Self {
         match msg {
             LivenessMsg::Vote(v) => Self::Vote(RawSignedVote {
                 message: v.message,
@@ -201,7 +201,7 @@ impl From<LivenessMsg<OpenHlContext>> for RawLivenessMsg {
     }
 }
 
-impl From<RawLivenessMsg> for LivenessMsg<OpenHlContext> {
+impl From<RawLivenessMsg> for LivenessMsg<PrincepsContext> {
     fn from(raw: RawLivenessMsg) -> Self {
         match raw {
             RawLivenessMsg::Vote(v) => LivenessMsg::Vote(SignedMessage::new(v.message, v.signature)),
@@ -239,15 +239,15 @@ impl From<RawLivenessMsg> for LivenessMsg<OpenHlContext> {
     }
 }
 
-impl Codec<LivenessMsg<OpenHlContext>> for OpenHlCodec {
+impl Codec<LivenessMsg<PrincepsContext>> for PrincepsCodec {
     type Error = CodecError;
 
-    fn decode(&self, bytes: Bytes) -> Result<LivenessMsg<OpenHlContext>, Self::Error> {
+    fn decode(&self, bytes: Bytes) -> Result<LivenessMsg<PrincepsContext>, Self::Error> {
         let raw: RawLivenessMsg = serde_json::from_slice(&bytes)?;
         Ok(raw.into())
     }
 
-    fn encode(&self, msg: &LivenessMsg<OpenHlContext>) -> Result<Bytes, Self::Error> {
+    fn encode(&self, msg: &LivenessMsg<PrincepsContext>) -> Result<Bytes, Self::Error> {
         let raw = RawLivenessMsg::from(msg.clone());
         Ok(Bytes::from(serde_json::to_vec(&raw)?))
     }
@@ -257,7 +257,7 @@ impl Codec<LivenessMsg<OpenHlContext>> for OpenHlCodec {
 
 #[derive(Serialize, Deserialize)]
 enum RawStreamContent {
-    Data(OpenHlProposalPart),
+    Data(PrincepsProposalPart),
     Fin,
 }
 
@@ -268,8 +268,8 @@ struct RawStreamMessage {
     content: RawStreamContent,
 }
 
-impl From<StreamMessage<OpenHlProposalPart>> for RawStreamMessage {
-    fn from(msg: StreamMessage<OpenHlProposalPart>) -> Self {
+impl From<StreamMessage<PrincepsProposalPart>> for RawStreamMessage {
+    fn from(msg: StreamMessage<PrincepsProposalPart>) -> Self {
         Self {
             stream_id: msg.stream_id.to_bytes(),
             sequence: msg.sequence,
@@ -281,7 +281,7 @@ impl From<StreamMessage<OpenHlProposalPart>> for RawStreamMessage {
     }
 }
 
-impl From<RawStreamMessage> for StreamMessage<OpenHlProposalPart> {
+impl From<RawStreamMessage> for StreamMessage<PrincepsProposalPart> {
     fn from(raw: RawStreamMessage) -> Self {
         Self {
             stream_id: StreamId::new(raw.stream_id),
@@ -294,15 +294,15 @@ impl From<RawStreamMessage> for StreamMessage<OpenHlProposalPart> {
     }
 }
 
-impl Codec<StreamMessage<OpenHlProposalPart>> for OpenHlCodec {
+impl Codec<StreamMessage<PrincepsProposalPart>> for PrincepsCodec {
     type Error = CodecError;
 
-    fn decode(&self, bytes: Bytes) -> Result<StreamMessage<OpenHlProposalPart>, Self::Error> {
+    fn decode(&self, bytes: Bytes) -> Result<StreamMessage<PrincepsProposalPart>, Self::Error> {
         let raw: RawStreamMessage = serde_json::from_slice(&bytes)?;
         Ok(raw.into())
     }
 
-    fn encode(&self, msg: &StreamMessage<OpenHlProposalPart>) -> Result<Bytes, Self::Error> {
+    fn encode(&self, msg: &StreamMessage<PrincepsProposalPart>) -> Result<Bytes, Self::Error> {
         let raw = RawStreamMessage::from(msg.clone());
         Ok(Bytes::from(serde_json::to_vec(&raw)?))
     }
@@ -338,16 +338,16 @@ impl From<RawValidity> for Validity {
 
 #[derive(Serialize, Deserialize)]
 struct RawProposedValue {
-    height: OpenHlHeight,
+    height: PrincepsHeight,
     round: Round,
     valid_round: Round,
-    proposer: OpenHlAddress,
-    value: OpenHlValue,
+    proposer: PrincepsAddress,
+    value: PrincepsValue,
     validity: RawValidity,
 }
 
-impl From<ProposedValue<OpenHlContext>> for RawProposedValue {
-    fn from(v: ProposedValue<OpenHlContext>) -> Self {
+impl From<ProposedValue<PrincepsContext>> for RawProposedValue {
+    fn from(v: ProposedValue<PrincepsContext>) -> Self {
         Self {
             height: v.height,
             round: v.round,
@@ -359,7 +359,7 @@ impl From<ProposedValue<OpenHlContext>> for RawProposedValue {
     }
 }
 
-impl From<RawProposedValue> for ProposedValue<OpenHlContext> {
+impl From<RawProposedValue> for ProposedValue<PrincepsContext> {
     fn from(r: RawProposedValue) -> Self {
         Self {
             height: r.height,
@@ -372,15 +372,15 @@ impl From<RawProposedValue> for ProposedValue<OpenHlContext> {
     }
 }
 
-impl Codec<ProposedValue<OpenHlContext>> for OpenHlCodec {
+impl Codec<ProposedValue<PrincepsContext>> for PrincepsCodec {
     type Error = CodecError;
 
-    fn decode(&self, bytes: Bytes) -> Result<ProposedValue<OpenHlContext>, Self::Error> {
+    fn decode(&self, bytes: Bytes) -> Result<ProposedValue<PrincepsContext>, Self::Error> {
         let raw: RawProposedValue = serde_json::from_slice(&bytes)?;
         Ok(raw.into())
     }
 
-    fn encode(&self, msg: &ProposedValue<OpenHlContext>) -> Result<Bytes, Self::Error> {
+    fn encode(&self, msg: &ProposedValue<PrincepsContext>) -> Result<Bytes, Self::Error> {
         let raw = RawProposedValue::from(msg.clone());
         Ok(Bytes::from(serde_json::to_vec(&raw)?))
     }
@@ -395,12 +395,12 @@ struct RawStatus {
     /// as a workspace dep just for one type — round-tripping through
     /// `to_bytes`/`from_bytes` is simpler.
     peer_id: Bytes,
-    tip_height: OpenHlHeight,
-    history_min_height: OpenHlHeight,
+    tip_height: PrincepsHeight,
+    history_min_height: PrincepsHeight,
 }
 
-impl From<Status<OpenHlContext>> for RawStatus {
-    fn from(s: Status<OpenHlContext>) -> Self {
+impl From<Status<PrincepsContext>> for RawStatus {
+    fn from(s: Status<PrincepsContext>) -> Self {
         Self {
             peer_id: Bytes::from(s.peer_id.to_bytes()),
             tip_height: s.tip_height,
@@ -409,7 +409,7 @@ impl From<Status<OpenHlContext>> for RawStatus {
     }
 }
 
-impl TryFrom<RawStatus> for Status<OpenHlContext> {
+impl TryFrom<RawStatus> for Status<PrincepsContext> {
     type Error = CodecError;
 
     fn try_from(r: RawStatus) -> Result<Self, Self::Error> {
@@ -422,15 +422,15 @@ impl TryFrom<RawStatus> for Status<OpenHlContext> {
     }
 }
 
-impl Codec<Status<OpenHlContext>> for OpenHlCodec {
+impl Codec<Status<PrincepsContext>> for PrincepsCodec {
     type Error = CodecError;
 
-    fn decode(&self, bytes: Bytes) -> Result<Status<OpenHlContext>, Self::Error> {
+    fn decode(&self, bytes: Bytes) -> Result<Status<PrincepsContext>, Self::Error> {
         let raw: RawStatus = serde_json::from_slice(&bytes)?;
         raw.try_into()
     }
 
-    fn encode(&self, msg: &Status<OpenHlContext>) -> Result<Bytes, Self::Error> {
+    fn encode(&self, msg: &Status<PrincepsContext>) -> Result<Bytes, Self::Error> {
         let raw = RawStatus::from(msg.clone());
         Ok(Bytes::from(serde_json::to_vec(&raw)?))
     }
@@ -440,7 +440,7 @@ impl Codec<Status<OpenHlContext>> for OpenHlCodec {
 
 #[derive(Serialize, Deserialize)]
 struct RawValueRequest {
-    height: OpenHlHeight,
+    height: PrincepsHeight,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -448,15 +448,15 @@ enum RawRequest {
     ValueRequest(RawValueRequest),
 }
 
-impl From<Request<OpenHlContext>> for RawRequest {
-    fn from(r: Request<OpenHlContext>) -> Self {
+impl From<Request<PrincepsContext>> for RawRequest {
+    fn from(r: Request<PrincepsContext>) -> Self {
         match r {
             Request::ValueRequest(vr) => Self::ValueRequest(RawValueRequest { height: vr.height }),
         }
     }
 }
 
-impl From<RawRequest> for Request<OpenHlContext> {
+impl From<RawRequest> for Request<PrincepsContext> {
     fn from(raw: RawRequest) -> Self {
         match raw {
             RawRequest::ValueRequest(vr) => Self::ValueRequest(ValueRequest::new(vr.height)),
@@ -464,15 +464,15 @@ impl From<RawRequest> for Request<OpenHlContext> {
     }
 }
 
-impl Codec<Request<OpenHlContext>> for OpenHlCodec {
+impl Codec<Request<PrincepsContext>> for PrincepsCodec {
     type Error = CodecError;
 
-    fn decode(&self, bytes: Bytes) -> Result<Request<OpenHlContext>, Self::Error> {
+    fn decode(&self, bytes: Bytes) -> Result<Request<PrincepsContext>, Self::Error> {
         let raw: RawRequest = serde_json::from_slice(&bytes)?;
         Ok(raw.into())
     }
 
-    fn encode(&self, msg: &Request<OpenHlContext>) -> Result<Bytes, Self::Error> {
+    fn encode(&self, msg: &Request<PrincepsContext>) -> Result<Bytes, Self::Error> {
         let raw = RawRequest::from(msg.clone());
         Ok(Bytes::from(serde_json::to_vec(&raw)?))
     }
@@ -482,13 +482,13 @@ impl Codec<Request<OpenHlContext>> for OpenHlCodec {
 
 #[derive(Serialize, Deserialize)]
 struct RawCommitSignature {
-    address: OpenHlAddress,
+    address: PrincepsAddress,
     signature: Signature,
 }
 
 #[derive(Serialize, Deserialize)]
 struct RawCommitCertificate {
-    height: OpenHlHeight,
+    height: PrincepsHeight,
     round: Round,
     value_id: BlockHash,
     commit_signatures: Vec<RawCommitSignature>,
@@ -502,7 +502,7 @@ struct RawDecided {
 
 #[derive(Serialize, Deserialize)]
 struct RawValueResponse {
-    height: OpenHlHeight,
+    height: PrincepsHeight,
     value: Option<RawDecided>,
 }
 
@@ -511,8 +511,8 @@ enum RawResponse {
     ValueResponse(RawValueResponse),
 }
 
-impl From<Response<OpenHlContext>> for RawResponse {
-    fn from(r: Response<OpenHlContext>) -> Self {
+impl From<Response<PrincepsContext>> for RawResponse {
+    fn from(r: Response<PrincepsContext>) -> Self {
         match r {
             Response::ValueResponse(vr) => Self::ValueResponse(RawValueResponse {
                 height: vr.height,
@@ -538,7 +538,7 @@ impl From<Response<OpenHlContext>> for RawResponse {
     }
 }
 
-impl From<RawResponse> for Response<OpenHlContext> {
+impl From<RawResponse> for Response<PrincepsContext> {
     fn from(raw: RawResponse) -> Self {
         match raw {
             RawResponse::ValueResponse(vr) => Self::ValueResponse(ValueResponse::new(
@@ -565,15 +565,15 @@ impl From<RawResponse> for Response<OpenHlContext> {
     }
 }
 
-impl Codec<Response<OpenHlContext>> for OpenHlCodec {
+impl Codec<Response<PrincepsContext>> for PrincepsCodec {
     type Error = CodecError;
 
-    fn decode(&self, bytes: Bytes) -> Result<Response<OpenHlContext>, Self::Error> {
+    fn decode(&self, bytes: Bytes) -> Result<Response<PrincepsContext>, Self::Error> {
         let raw: RawResponse = serde_json::from_slice(&bytes)?;
         Ok(raw.into())
     }
 
-    fn encode(&self, msg: &Response<OpenHlContext>) -> Result<Bytes, Self::Error> {
+    fn encode(&self, msg: &Response<PrincepsContext>) -> Result<Bytes, Self::Error> {
         let raw = RawResponse::from(msg.clone());
         Ok(Bytes::from(serde_json::to_vec(&raw)?))
     }
@@ -588,34 +588,34 @@ mod tests {
     use informalsystems_malachitebft_signing_ed25519::PrivateKey;
     use rand::rngs::OsRng;
 
-    fn assert_wal_codec<C: WalCodec<OpenHlContext>>() {}
-    fn assert_consensus_codec<C: ConsensusCodec<OpenHlContext>>() {}
-    fn assert_sync_codec<C: SyncCodec<OpenHlContext>>() {}
+    fn assert_wal_codec<C: WalCodec<PrincepsContext>>() {}
+    fn assert_consensus_codec<C: ConsensusCodec<PrincepsContext>>() {}
+    fn assert_sync_codec<C: SyncCodec<PrincepsContext>>() {}
 
     #[test]
     fn princeps_codec_satisfies_all_three_super_traits() {
-        assert_wal_codec::<OpenHlCodec>();
-        assert_consensus_codec::<OpenHlCodec>();
-        assert_sync_codec::<OpenHlCodec>();
+        assert_wal_codec::<PrincepsCodec>();
+        assert_consensus_codec::<PrincepsCodec>();
+        assert_sync_codec::<PrincepsCodec>();
     }
 
-    fn sample_vote() -> OpenHlVote {
-        OpenHlVote {
-            height: OpenHlHeight(7),
+    fn sample_vote() -> PrincepsVote {
+        PrincepsVote {
+            height: PrincepsHeight(7),
             round: Round::new(2),
             value_id: NilOrVal::Val(BlockHash([0x42; 32])),
             vote_type: VoteType::Prevote,
-            address: OpenHlAddress([0xaa; 20]),
+            address: PrincepsAddress([0xaa; 20]),
         }
     }
 
-    fn sample_proposal() -> OpenHlProposal {
-        OpenHlProposal {
-            height: OpenHlHeight(7),
+    fn sample_proposal() -> PrincepsProposal {
+        PrincepsProposal {
+            height: PrincepsHeight(7),
             round: Round::new(2),
-            value: OpenHlValue(BlockHash([0x11; 32])),
+            value: PrincepsValue(BlockHash([0x11; 32])),
             pol_round: Round::Nil,
-            address: OpenHlAddress([0xbb; 20]),
+            address: PrincepsAddress([0xbb; 20]),
         }
     }
 
@@ -626,28 +626,28 @@ mod tests {
 
     #[test]
     fn proposal_part_round_trips() {
-        let codec = OpenHlCodec;
-        let part = OpenHlProposalPart {
-            height: OpenHlHeight(11),
+        let codec = PrincepsCodec;
+        let part = PrincepsProposalPart {
+            height: PrincepsHeight(11),
             round: Round::new(0),
             pol_round: Round::Nil,
-            proposer: OpenHlAddress([0xab; 20]),
+            proposer: PrincepsAddress([0xab; 20]),
             block_bytes: vec![0xde, 0xad, 0xbe, 0xef],
         };
-        let bytes = Codec::<OpenHlProposalPart>::encode(&codec, &part).unwrap();
-        let decoded: OpenHlProposalPart = codec.decode(bytes).unwrap();
+        let bytes = Codec::<PrincepsProposalPart>::encode(&codec, &part).unwrap();
+        let decoded: PrincepsProposalPart = codec.decode(bytes).unwrap();
         assert_eq!(decoded, part);
     }
 
     #[test]
     fn signed_consensus_msg_vote_round_trips() {
-        let codec = OpenHlCodec;
-        let msg = SignedConsensusMsg::<OpenHlContext>::Vote(SignedMessage::new(
+        let codec = PrincepsCodec;
+        let msg = SignedConsensusMsg::<PrincepsContext>::Vote(SignedMessage::new(
             sample_vote(),
             sample_signature(),
         ));
         let bytes = codec.encode(&msg).unwrap();
-        let decoded: SignedConsensusMsg<OpenHlContext> = codec.decode(bytes).unwrap();
+        let decoded: SignedConsensusMsg<PrincepsContext> = codec.decode(bytes).unwrap();
         match (msg, decoded) {
             (SignedConsensusMsg::Vote(a), SignedConsensusMsg::Vote(b)) => {
                 assert_eq!(a.message, b.message);
@@ -659,13 +659,13 @@ mod tests {
 
     #[test]
     fn signed_consensus_msg_proposal_round_trips() {
-        let codec = OpenHlCodec;
-        let msg = SignedConsensusMsg::<OpenHlContext>::Proposal(SignedMessage::new(
+        let codec = PrincepsCodec;
+        let msg = SignedConsensusMsg::<PrincepsContext>::Proposal(SignedMessage::new(
             sample_proposal(),
             sample_signature(),
         ));
         let bytes = codec.encode(&msg).unwrap();
-        let decoded: SignedConsensusMsg<OpenHlContext> = codec.decode(bytes).unwrap();
+        let decoded: SignedConsensusMsg<PrincepsContext> = codec.decode(bytes).unwrap();
         match (msg, decoded) {
             (SignedConsensusMsg::Proposal(a), SignedConsensusMsg::Proposal(b)) => {
                 assert_eq!(a.message, b.message);
@@ -677,13 +677,13 @@ mod tests {
 
     #[test]
     fn liveness_vote_round_trips() {
-        let codec = OpenHlCodec;
-        let msg = LivenessMsg::<OpenHlContext>::Vote(SignedMessage::new(
+        let codec = PrincepsCodec;
+        let msg = LivenessMsg::<PrincepsContext>::Vote(SignedMessage::new(
             sample_vote(),
             sample_signature(),
         ));
         let bytes = codec.encode(&msg).unwrap();
-        let decoded: LivenessMsg<OpenHlContext> = codec.decode(bytes).unwrap();
+        let decoded: LivenessMsg<PrincepsContext> = codec.decode(bytes).unwrap();
         match (msg, decoded) {
             (LivenessMsg::Vote(a), LivenessMsg::Vote(b)) => {
                 assert_eq!(a.message, b.message);
@@ -695,26 +695,26 @@ mod tests {
 
     #[test]
     fn proposed_value_round_trips() {
-        let codec = OpenHlCodec;
-        let msg = ProposedValue::<OpenHlContext> {
-            height: OpenHlHeight(9),
+        let codec = PrincepsCodec;
+        let msg = ProposedValue::<PrincepsContext> {
+            height: PrincepsHeight(9),
             round: Round::new(0),
             valid_round: Round::Nil,
-            proposer: OpenHlAddress([0xcc; 20]),
-            value: OpenHlValue(BlockHash([0x77; 32])),
+            proposer: PrincepsAddress([0xcc; 20]),
+            value: PrincepsValue(BlockHash([0x77; 32])),
             validity: Validity::Valid,
         };
         let bytes = codec.encode(&msg).unwrap();
-        let decoded: ProposedValue<OpenHlContext> = codec.decode(bytes).unwrap();
+        let decoded: ProposedValue<PrincepsContext> = codec.decode(bytes).unwrap();
         assert_eq!(msg, decoded);
     }
 
     #[test]
     fn sync_request_round_trips() {
-        let codec = OpenHlCodec;
-        let msg = Request::<OpenHlContext>::ValueRequest(ValueRequest::new(OpenHlHeight(5)));
+        let codec = PrincepsCodec;
+        let msg = Request::<PrincepsContext>::ValueRequest(ValueRequest::new(PrincepsHeight(5)));
         let bytes = codec.encode(&msg).unwrap();
-        let decoded: Request<OpenHlContext> = codec.decode(bytes).unwrap();
+        let decoded: Request<PrincepsContext> = codec.decode(bytes).unwrap();
         match (msg, decoded) {
             (Request::ValueRequest(a), Request::ValueRequest(b)) => {
                 assert_eq!(a.height, b.height);
@@ -724,14 +724,14 @@ mod tests {
 
     #[test]
     fn stream_message_fin_round_trips() {
-        let codec = OpenHlCodec;
-        let msg = StreamMessage::<OpenHlProposalPart> {
-            stream_id: StreamId::new(Bytes::from_static(b"openhl-stream-42")),
+        let codec = PrincepsCodec;
+        let msg = StreamMessage::<PrincepsProposalPart> {
+            stream_id: StreamId::new(Bytes::from_static(b"princeps-stream-42")),
             sequence: 11,
             content: StreamContent::Fin,
         };
         let bytes = codec.encode(&msg).unwrap();
-        let decoded: StreamMessage<OpenHlProposalPart> = codec.decode(bytes).unwrap();
+        let decoded: StreamMessage<PrincepsProposalPart> = codec.decode(bytes).unwrap();
         assert_eq!(decoded.stream_id, msg.stream_id);
         assert_eq!(decoded.sequence, msg.sequence);
         assert!(matches!(decoded.content, StreamContent::Fin));

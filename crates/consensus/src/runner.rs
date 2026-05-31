@@ -24,11 +24,11 @@ use rand::rngs::OsRng;
 use thiserror::Error;
 
 use crate::bridge::{BridgeError, ConsensusBridge};
-use crate::context::OpenHlContext;
+use crate::context::PrincepsContext;
 use crate::signing::sign_vote;
-use crate::signing_provider::OpenHlSigningProvider;
+use crate::signing_provider::PrincepsSigningProvider;
 use crate::types::{
-    OpenHlAddress, OpenHlHeight, OpenHlValidator, OpenHlValidatorSet, OpenHlValue, OpenHlVote,
+    PrincepsAddress, PrincepsHeight, PrincepsValidator, PrincepsValidatorSet, PrincepsValue, PrincepsVote,
 };
 
 #[derive(Debug, Error)]
@@ -58,15 +58,15 @@ where
 {
     let private = PrivateKey::generate(OsRng);
     let public = private.public_key();
-    let address = OpenHlAddress(address_from_public_key(&public));
+    let address = PrincepsAddress(address_from_public_key(&public));
 
-    let validator_set = OpenHlValidatorSet::new(vec![OpenHlValidator::new(
+    let validator_set = PrincepsValidatorSet::new(vec![PrincepsValidator::new(
         address, public, 1 as VotingPower,
     )]);
 
-    let height = OpenHlHeight::INITIAL;
+    let height = PrincepsHeight::INITIAL;
     let mut driver = Driver::new(
-        OpenHlContext,
+        PrincepsContext,
         height,
         validator_set,
         address,
@@ -78,7 +78,7 @@ where
         .map_err(|e| RunError::Driver(format!("{e:?}")))?;
 
     loop {
-        let mut next: Vec<Input<OpenHlContext>> = Vec::new();
+        let mut next: Vec<Input<PrincepsContext>> = Vec::new();
 
         for output in outputs.drain(..) {
             match output {
@@ -87,7 +87,7 @@ where
                         .build_payload(parent, default_attrs())
                         .await?;
                     let block = bridge.payload_ready(id).await?;
-                    next.push(Input::ProposeValue(r, OpenHlValue(block.hash)));
+                    next.push(Input::ProposeValue(r, PrincepsValue(block.hash)));
                 }
                 Output::Propose(proposal) => {
                     next.push(Input::Proposal(
@@ -148,42 +148,42 @@ where
     // first in the canonical sort and don't have to map back to a randomised
     // position.
     let keys: Vec<PrivateKey> = (0..n).map(|_| PrivateKey::generate(OsRng)).collect();
-    let mut entries: Vec<(OpenHlAddress, PrivateKey, OpenHlValidator)> = keys
+    let mut entries: Vec<(PrincepsAddress, PrivateKey, PrincepsValidator)> = keys
         .into_iter()
         .enumerate()
         .map(|(i, sk)| {
             let pk = sk.public_key();
-            let addr = OpenHlAddress(address_from_public_key(&pk));
+            let addr = PrincepsAddress(address_from_public_key(&pk));
             let power: VotingPower = if i == 0 { 2 } else { 1 };
-            let validator = OpenHlValidator::new(addr, pk, power);
+            let validator = PrincepsValidator::new(addr, pk, power);
             (addr, sk, validator)
         })
         .collect();
 
     let our_address = entries[0].0;
-    let our_provider = OpenHlSigningProvider::new(entries[0].1.clone());
-    let validator_set = OpenHlValidatorSet::new(entries.iter().map(|(_, _, v)| v.clone()).collect());
+    let our_provider = PrincepsSigningProvider::new(entries[0].1.clone());
+    let validator_set = PrincepsValidatorSet::new(entries.iter().map(|(_, _, v)| v.clone()).collect());
 
-    let signers: HashMap<OpenHlAddress, PrivateKey> = entries
+    let signers: HashMap<PrincepsAddress, PrivateKey> = entries
         .drain(..)
         .map(|(addr, sk, _)| (addr, sk))
         .collect();
 
     // Pre-build the value once — every validator agrees on the same one.
-    let height = OpenHlHeight::INITIAL;
+    let height = PrincepsHeight::INITIAL;
     let id = bridge.build_payload(parent, default_attrs()).await?;
     let block = bridge.payload_ready(id).await?;
-    let value = OpenHlValue(block.hash);
+    let value = PrincepsValue(block.hash);
     let value_id_for_votes = NilOrVal::Val(block.hash);
 
     // Determine proposer for round 0.
-    let proposer_address = OpenHlContext
+    let proposer_address = PrincepsContext
         .select_proposer(&validator_set, height, Round::new(0))
         .address;
     let we_are_proposer = proposer_address == our_address;
 
     let mut driver = Driver::new(
-        OpenHlContext,
+        PrincepsContext,
         height,
         validator_set.clone(),
         our_address,
@@ -195,14 +195,14 @@ where
         .map_err(|e| RunError::Driver(format!("{e:?}")))?;
 
     if !we_are_proposer {
-        let proposal = OpenHlContext.new_proposal(
+        let proposal = PrincepsContext.new_proposal(
             height,
             Round::new(0),
             value,
             Round::Nil,
             proposer_address,
         );
-        let proposer_provider = OpenHlSigningProvider::new(
+        let proposer_provider = PrincepsSigningProvider::new(
             signers
                 .get(&proposer_address)
                 .expect("proposer in signers")
@@ -231,21 +231,21 @@ where
 
 #[allow(clippy::too_many_arguments)] // each argument is irreducible state for the loop
 async fn drive_loop_multi<B>(
-    driver: &mut Driver<OpenHlContext>,
-    mut outputs: Vec<Output<OpenHlContext>>,
+    driver: &mut Driver<PrincepsContext>,
+    mut outputs: Vec<Output<PrincepsContext>>,
     bridge: &B,
-    value: OpenHlValue,
+    value: PrincepsValue,
     value_id_for_votes: NilOrVal<BlockHash>,
-    our_address: OpenHlAddress,
-    our_provider: &OpenHlSigningProvider,
-    signers: &HashMap<OpenHlAddress, PrivateKey>,
-    validator_set: &OpenHlValidatorSet,
+    our_address: PrincepsAddress,
+    our_provider: &PrincepsSigningProvider,
+    signers: &HashMap<PrincepsAddress, PrivateKey>,
+    validator_set: &PrincepsValidatorSet,
 ) -> Result<BlockHash, RunError>
 where
     B: ConsensusBridge,
 {
     loop {
-        let mut next: Vec<Input<OpenHlContext>> = Vec::new();
+        let mut next: Vec<Input<PrincepsContext>> = Vec::new();
 
         for output in outputs.drain(..) {
             match output {
@@ -275,7 +275,7 @@ where
                     return Ok(hash);
                 }
                 Output::NewRound(h, r) => {
-                    let next_proposer = OpenHlContext
+                    let next_proposer = PrincepsContext
                         .select_proposer(validator_set, h, r)
                         .address;
                     next.push(Input::NewRound(h, r, next_proposer));
@@ -301,11 +301,11 @@ where
 /// Build a vote with the same height/round/value/type as `template`, but
 /// attributed to `address`. Used to synthesize honest peer votes.
 fn matching_vote_from(
-    template: &OpenHlVote,
-    address: OpenHlAddress,
+    template: &PrincepsVote,
+    address: PrincepsAddress,
     value_id: NilOrVal<BlockHash>,
-) -> OpenHlVote {
-    OpenHlVote {
+) -> PrincepsVote {
+    PrincepsVote {
         height: template.height,
         round: template.round,
         value_id: match template.value_id {

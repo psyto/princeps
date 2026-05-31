@@ -1,7 +1,7 @@
-//! `openhl-oracle` — index-price aggregation for the perpetual market.
+//! `princeps-oracle` — index-price aggregation for the perpetual market.
 //!
 //! Pure compute + small state machine, same architectural shape as
-//! `openhl-funding` and `openhl-liquidation`: `types → compute → state`.
+//! `princeps-funding` and `princeps-liquidation`: `types → compute → state`.
 //! Every validator must arrive at the same [`AggregatedPrice`] from the
 //! same observation stream, so all arithmetic is integer + saturating
 //! and every aggregation choice is deterministic.
@@ -63,7 +63,7 @@
 //!
 //! ### Why fixed-point integers, not floats
 //!
-//! Same answer as `openhl-funding` and `openhl-liquidation`: consensus
+//! Same answer as `princeps-funding` and `princeps-liquidation`: consensus
 //! determinism. Every validator must arrive at the same aggregated
 //! index from the same observations, and float arithmetic varies
 //! bit-for-bit across compilers and CPUs.

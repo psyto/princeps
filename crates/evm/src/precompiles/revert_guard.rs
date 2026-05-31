@@ -1,4 +1,4 @@
-//! `OpenHlRevertGuard` — REVM `Inspector` that rolls back precompile
+//! `PrincepsRevertGuard` — REVM `Inspector` that rolls back precompile
 //! mutations when the calling EVM frame reverts.
 //!
 //! ### The bug it closes
@@ -30,7 +30,7 @@
 //!
 //! This crate provides the **mechanism + tests**. Production wiring
 //! (replacing the `NoOpInspector` in
-//! [`crate::OpenHlEvmFactory::create_evm`]) is a deliberate
+//! [`crate::PrincepsEvmFactory::create_evm`]) is a deliberate
 //! follow-up — it touches every block execution in Reth and needs
 //! its own integration pass.
 //!
@@ -48,18 +48,18 @@ use alloy_evm::revm::{
 
 use super::{restore_bridge_state, snapshot_bridge_state, BridgeStateSnapshot};
 
-/// REVM `Inspector` that journals the openhl precompile globals
+/// REVM `Inspector` that journals the princeps precompile globals
 /// across EVM call frames. See the module docstring for the full
 /// rationale.
 #[derive(Debug, Default)]
-pub struct OpenHlRevertGuard {
+pub struct PrincepsRevertGuard {
     /// One snapshot per active call frame, in entry order. `call`
     /// pushes, `call_end` pops. A `Vec` mirrors REVM's natural call
     /// stack — no need for explicit frame IDs.
     savepoints: Vec<BridgeStateSnapshot>,
 }
 
-impl OpenHlRevertGuard {
+impl PrincepsRevertGuard {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -74,7 +74,7 @@ impl OpenHlRevertGuard {
     }
 }
 
-impl<CTX, INTR> Inspector<CTX, INTR> for OpenHlRevertGuard
+impl<CTX, INTR> Inspector<CTX, INTR> for PrincepsRevertGuard
 where
     INTR: InterpreterTypes,
 {

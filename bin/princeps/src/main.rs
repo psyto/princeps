@@ -1,16 +1,16 @@
-//! openhl — Hyperliquid-shape L1 reference implementation.
+//! princeps — Hyperliquid-shape L1 reference implementation.
 //!
 //! Three subcommands:
 //!
 //!   - `info` (default) — print the node's static config + initial state.
 //!   - `devnet [N]` — `N` single-validator consensus rounds through an
-//!     in-memory EVM bridge, calling `OpenHlNode::tick` between blocks.
+//!     in-memory EVM bridge, calling `PrincepsNode::tick` between blocks.
 //!     Stage 13b. The smallest runnable demo of the full per-block flow
 //!     at the binary level.
 //!   - `reth-devnet [N]` — Boots the production-shape stack: Reth via
-//!     `NodeBuilder` + `OpenHlExecutorBuilder`, then `LiveRethEvmBridge`
+//!     `NodeBuilder` + `PrincepsExecutorBuilder`, then `LiveRethEvmBridge`
 //!     against its provider, then the Malachite actor engine via
-//!     consensus `OpenHlNode::start`, then `run_engine_app` to drive
+//!     consensus `PrincepsNode::start`, then `run_engine_app` to drive
 //!     consensus decisions. Stage 13c.
 //!
 //!     Stage 13d + 8e make `reth-devnet N` produce N real blocks
@@ -24,13 +24,13 @@
 //!     self-consistent, which it now is.
 //!
 //! Examples:
-//!   $ openhl                                      # equivalent to `openhl info`
-//!   $ openhl info
-//!   $ openhl devnet                               # one in-memory round
-//!   $ openhl devnet --rounds 5                    # five in-memory rounds
-//!   $ openhl reth-devnet                          # one Reth-backed decision
-//!   $ openhl reth-devnet --rounds 3
-//!   $ openhl reth-devnet --moniker alice --data-dir ~/.openhl/data
+//!   $ princeps                                      # equivalent to `princeps info`
+//!   $ princeps info
+//!   $ princeps devnet                               # one in-memory round
+//!   $ princeps devnet --rounds 5                    # five in-memory rounds
+//!   $ princeps reth-devnet                          # one Reth-backed decision
+//!   $ princeps reth-devnet --rounds 3
+//!   $ princeps reth-devnet --moniker alice --data-dir ~/.princeps/data
 //!
 //! Stage 13e (this commit) introduces clap-based subcommands and the
 //! `--moniker` / `--data-dir` flags. Full production `NodeBuilder` path
@@ -49,13 +49,13 @@ use informalsystems_malachitebft_app::node::{Node, NodeHandle};
 use informalsystems_malachitebft_signing_ed25519::PrivateKey;
 use princeps_consensus::run_engine_app;
 use princeps_consensus::run_single_validator;
-use princeps_consensus::OpenHlPrivateKeyFile;
+use princeps_consensus::PrincepsPrivateKeyFile;
 use princeps_clob::{AccountId as ClobAccountId, Order, OrderId, OrderType, Price, Qty, Side};
-use princeps_evm::{BridgeSnapshot, InMemoryEvmBridge, LiveRethEvmBridge, OpenHlExecutorBuilder};
+use princeps_evm::{BridgeSnapshot, InMemoryEvmBridge, LiveRethEvmBridge, PrincepsExecutorBuilder};
 use k256::ecdsa::{signature::Signer, SigningKey};
 use princeps_funding::{IndexPrice, MarkPrice, Notional, PositionSize};
 use princeps_liquidation::{AccountSnapshot, CloseOutcomeKind};
-use princeps_node::{CoordinatorSnapshot, OpenHlNode, OpenHlNodeConfig, TickInput, TickReport};
+use princeps_node::{CoordinatorSnapshot, PrincepsNode, PrincepsNodeConfig, TickInput, TickReport};
 use princeps_oracle::{FeedId, PriceObservation, PublisherKey, Signature as OracleSignature};
 use princeps_types::BlockHash;
 use rand::rngs::OsRng;
@@ -73,7 +73,7 @@ use sha2::{Digest, Sha256};
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "openhl",
+    name = "princeps",
     version,
     about = "Hyperliquid-shape L1 reference implementation",
     long_about = None
@@ -89,7 +89,7 @@ enum Command {
     Info,
 
     /// Drive single-validator consensus rounds through an in-memory bridge,
-    /// calling `OpenHlNode::tick` between blocks. Stage 13b demo path.
+    /// calling `PrincepsNode::tick` between blocks. Stage 13b demo path.
     Devnet {
         /// Number of consensus rounds to drive.
         #[arg(long, default_value_t = 1)]
@@ -104,12 +104,12 @@ enum Command {
         rounds: u64,
 
         /// Moniker for the consensus node identity (used in logs / network
-        /// p2p discovery when wired). Default: openhl-reth-devnet.
-        #[arg(long, default_value = "openhl-reth-devnet")]
+        /// p2p discovery when wired). Default: princeps-reth-devnet.
+        #[arg(long, default_value = "princeps-reth-devnet")]
         moniker: String,
 
         /// Data directory for Reth's MDBX database and the consensus
-        /// home dir. Defaults to `$HOME/.openhl/data`.
+        /// home dir. Defaults to `$HOME/.princeps/data`.
         ///
         /// Stage 13f swapped this to the production `NodeBuilder` path
         /// (`reth_db::init_db` + `with_database` + `with_launch_context`),
@@ -252,22 +252,22 @@ fn tokio_rt() -> eyre::Result<tokio::runtime::Runtime> {
 
 /// Resolve the effective `--data-dir` path. If the user passed one
 /// explicitly we use it as-is; otherwise we default to
-/// `$HOME/.openhl/data`. Errors if neither is available (no HOME).
+/// `$HOME/.princeps/data`. Errors if neither is available (no HOME).
 fn resolve_data_dir(user_supplied: Option<&PathBuf>) -> eyre::Result<PathBuf> {
     if let Some(p) = user_supplied {
         return Ok(p.clone());
     }
     let home = std::env::var("HOME")
         .map_err(|_| eyre::eyre!("--data-dir not supplied and $HOME is not set"))?;
-    Ok(PathBuf::from(home).join(".openhl").join("data"))
+    Ok(PathBuf::from(home).join(".princeps").join("data"))
 }
 
 fn print_info() {
-    let config = OpenHlNodeConfig::hyperliquid_default();
-    let node = OpenHlNode::new(config);
+    let config = PrincepsNodeConfig::hyperliquid_default();
+    let node = PrincepsNode::new(config);
 
     println!(
-        "openhl v{} (Hyperliquid-shape L1 reference)",
+        "princeps v{} (Hyperliquid-shape L1 reference)",
         env!("CARGO_PKG_VERSION")
     );
     println!("config:");
@@ -320,16 +320,16 @@ fn print_info() {
 }
 
 /// Drive `rounds` single-validator consensus rounds through an
-/// **in-memory** EVM bridge, calling `OpenHlNode::tick` between each.
+/// **in-memory** EVM bridge, calling `PrincepsNode::tick` between each.
 /// Stage 13b path — no Reth boot.
 async fn run_devnet(rounds: u64) -> eyre::Result<()> {
-    let mut coordinator = OpenHlNode::new(OpenHlNodeConfig::hyperliquid_default());
+    let mut coordinator = PrincepsNode::new(PrincepsNodeConfig::hyperliquid_default());
     let bridge = Arc::new(InMemoryEvmBridge::new());
 
     let mut parent = BlockHash([0u8; 32]);
 
     println!(
-        "openhl v{} — driving {} single-validator devnet round{}",
+        "princeps v{} — driving {} single-validator devnet round{}",
         env!("CARGO_PKG_VERSION"),
         rounds,
         if rounds == 1 { "" } else { "s" }
@@ -366,10 +366,10 @@ async fn run_devnet(rounds: u64) -> eyre::Result<()> {
 /// Stage 13c path — the real boot ceremony.
 ///
 /// Flow:
-///   1. Spin up a Reth `EthereumNode` with `OpenHlExecutorBuilder`
+///   1. Spin up a Reth `EthereumNode` with `PrincepsExecutorBuilder`
 ///      (so the EVM has our custom CLOB precompiles registered).
 ///   2. Construct a [`LiveRethEvmBridge`] against the node's provider.
-///   3. Bootstrap a consensus [`princeps_consensus::OpenHlNode`] with a
+///   3. Bootstrap a consensus [`princeps_consensus::PrincepsNode`] with a
 ///      fresh Ed25519 keypair and a single-validator set.
 ///   4. `node.start().await` — spawns the Malachite actor system.
 ///   5. `take_channels().await` — get the engine's `AppMsg` channels.
@@ -388,7 +388,7 @@ async fn run_reth_devnet(
     rpc_bind: Option<String>,
 ) -> eyre::Result<()> {
     println!(
-        "openhl v{} — driving {} reth-backed decision{}",
+        "princeps v{} — driving {} reth-backed decision{}",
         env!("CARGO_PKG_VERSION"),
         rounds,
         if rounds == 1 { "" } else { "s" }
@@ -401,7 +401,7 @@ async fn run_reth_devnet(
     let reth_db_path = data_dir_path.join("reth");
     std::fs::create_dir_all(&reth_db_path)?;
 
-    println!("[1/6] booting Reth EthereumNode with OpenHlExecutorBuilder…");
+    println!("[1/6] booting Reth EthereumNode with PrincepsExecutorBuilder…");
     println!("      data dir         = {}", data_dir_path.display());
     println!("      Reth MDBX dir    = {}", reth_db_path.display());
 
@@ -425,7 +425,7 @@ async fn run_reth_devnet(
         rpc_args.http_addr = ip;
         rpc_args.http_port = port;
         // Stage 13l/13n: overriding `--rpc-bind` is the signal that this
-        // process shares a host with other openhl nodes. Reth's WS
+        // process shares a host with other princeps nodes. Reth's WS
         // (8546) and auth-RPC (8551) defaults would collide between
         // peers, so bind both to ephemeral ports (port 0 — OS picks).
         // The IPC endpoint at `/tmp/reth.ipc` is a single global path
@@ -464,7 +464,7 @@ async fn run_reth_devnet(
         .with_database(db)
         .with_launch_context(runtime)
         .with_types::<EthereumNode>()
-        .with_components(EthereumNode::components().executor(OpenHlExecutorBuilder::default()))
+        .with_components(EthereumNode::components().executor(PrincepsExecutorBuilder::default()))
         .with_add_ons(EthereumAddOns::default())
         .launch()
         .await?;
@@ -515,7 +515,7 @@ async fn run_reth_devnet(
     // and (future) multi-validator peers see a continuous height
     // sequence rather than restarting at 1 every run.
     let initial_height_for_consensus =
-        princeps_consensus::types::OpenHlHeight(prior_decisions.saturating_add(1));
+        princeps_consensus::types::PrincepsHeight(prior_decisions.saturating_add(1));
 
     // 3. Consensus node with single-validator set.
     //    Stage 13h: load the validator key from disk if present,
@@ -525,12 +525,12 @@ async fn run_reth_devnet(
     let key_path = data_dir_path.join("validator-key.json");
     let (private, key_status) = if key_path.exists() {
         let bytes = std::fs::read(&key_path)?;
-        let file: OpenHlPrivateKeyFile = serde_json::from_slice(&bytes)
+        let file: PrincepsPrivateKeyFile = serde_json::from_slice(&bytes)
             .map_err(|e| eyre::eyre!("malformed validator key at {key_path:?}: {e}"))?;
         (file.into_private_key(), "loaded")
     } else {
         let fresh = PrivateKey::generate(OsRng);
-        let file = OpenHlPrivateKeyFile::from_private_key(&fresh);
+        let file = PrincepsPrivateKeyFile::from_private_key(&fresh);
         if let Some(parent) = key_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -594,10 +594,10 @@ async fn run_reth_devnet(
         let digest = Sha256::digest(public.as_bytes());
         let mut addr_bytes = [0u8; 20];
         addr_bytes.copy_from_slice(&digest[12..32]);
-        let address = princeps_consensus::types::OpenHlAddress(addr_bytes);
+        let address = princeps_consensus::types::PrincepsAddress(addr_bytes);
         println!("      validator set    = (single-validator default)");
-        let set = princeps_consensus::types::OpenHlValidatorSet::new(vec![
-            princeps_consensus::types::OpenHlValidator::new(address, public, 1),
+        let set = princeps_consensus::types::PrincepsValidatorSet::new(vec![
+            princeps_consensus::types::PrincepsValidator::new(address, public, 1),
         ]);
         (set, Vec::new())
     };
@@ -607,7 +607,7 @@ async fn run_reth_devnet(
     let consensus_home = data_dir_path.join("consensus");
     std::fs::create_dir_all(&consensus_home)?;
     println!("      consensus home   = {}", consensus_home.display());
-    let mut consensus_node = princeps_consensus::OpenHlNode::new(
+    let mut consensus_node = princeps_consensus::PrincepsNode::new(
         private,
         validator_set.clone(),
         consensus_home,
@@ -656,7 +656,7 @@ async fn run_reth_devnet(
     let rounds_usize = usize::try_from(rounds)
         .map_err(|_| eyre::eyre!("rounds value too large for usize on this target"))?;
 
-    // Stage 14a: integration coordinator. One `OpenHlNode` per
+    // Stage 14a: integration coordinator. One `PrincepsNode` per
     // running validator. Every committed block triggers a `tick`.
     // Stage 14e: if a prior run persisted a coordinator snapshot,
     // load it so the insurance fund balance, vault, and oracle
@@ -665,9 +665,9 @@ async fn run_reth_devnet(
     // Stage 15a: dev override — shrink the funding interval from
     // Hyperliquid's 1 hour to 1 second so the clock fires per block
     // in a 3-round test. Production deployments leave it at 3600.
-    let mut node_config = OpenHlNodeConfig::hyperliquid_default();
+    let mut node_config = PrincepsNodeConfig::hyperliquid_default();
     node_config.funding_params.interval_secs = 1;
-    let mut coordinator_inner = OpenHlNode::new(node_config);
+    let mut coordinator_inner = PrincepsNode::new(node_config);
     let coordinator_state_path = data_dir_path.join("coordinator").join("state.json");
     if coordinator_state_path.exists() {
         let bytes = std::fs::read(&coordinator_state_path)?;
@@ -1042,7 +1042,7 @@ fn load_chain_spec(path: &Path) -> eyre::Result<Arc<ChainSpec>> {
 /// validator in the set — used to filter our own entry out of the
 /// libp2p dial list (Stage 13l).
 struct LoadedValidatorSet {
-    set: princeps_consensus::types::OpenHlValidatorSet,
+    set: princeps_consensus::types::PrincepsValidatorSet,
     peer_multiaddrs: Vec<Option<String>>,
     self_index: usize,
 }
@@ -1097,8 +1097,8 @@ fn load_validator_set(
         let digest = Sha256::digest(pubkey.as_bytes());
         let mut addr = [0u8; 20];
         addr.copy_from_slice(&digest[12..32]);
-        built.push(princeps_consensus::types::OpenHlValidator::new(
-            princeps_consensus::types::OpenHlAddress(addr),
+        built.push(princeps_consensus::types::PrincepsValidator::new(
+            princeps_consensus::types::PrincepsAddress(addr),
             pubkey,
             entry.voting_power,
         ));
@@ -1112,7 +1112,7 @@ fn load_validator_set(
         )
     })?;
     Ok(LoadedValidatorSet {
-        set: princeps_consensus::types::OpenHlValidatorSet::new(built),
+        set: princeps_consensus::types::PrincepsValidatorSet::new(built),
         peer_multiaddrs,
         self_index,
     })

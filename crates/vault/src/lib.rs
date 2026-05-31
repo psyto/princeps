@@ -1,7 +1,7 @@
-//! `openhl-vault` — share-based vault primitive.
+//! `princeps-vault` — share-based vault primitive.
 //!
 //! Pure compute + small state machine, same architectural shape as
-//! `openhl-funding`, `openhl-liquidation`, and `openhl-oracle`:
+//! `princeps-funding`, `princeps-liquidation`, and `princeps-oracle`:
 //! `types → compute → state`. Every validator must arrive at the same
 //! `(shares_minted, assets_returned)` from the same inputs, so all
 //! arithmetic is integer + saturating and the share/asset conversion
@@ -57,7 +57,7 @@
 //!
 //! ### Why fixed-point integers, not floats
 //!
-//! Same answer as the other openhl crates: consensus determinism.
+//! Same answer as the other princeps crates: consensus determinism.
 //! Every validator must arrive at the same `shares_minted` from the
 //! same inputs, and float arithmetic varies bit-for-bit across
 //! compilers and CPUs.

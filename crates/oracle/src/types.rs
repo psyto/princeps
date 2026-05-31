@@ -2,7 +2,7 @@
 //!
 //! Pure data — every type is `Copy`-friendly so the aggregation engine
 //! can be invoked on stack-allocated observation slices without lifetime
-//! gymnastics. Follows the openhl convention: the crate never owns
+//! gymnastics. Follows the princeps convention: the crate never owns
 //! mutable state in its types; mutation lives in [`crate::state`].
 //!
 //! ### What an oracle does, in one paragraph
@@ -21,14 +21,14 @@ use princeps_funding::IndexPrice;
 use serde::{Deserialize, Serialize};
 
 /// Bps scale factor. 1 bp = 0.01%; `DEVIATION_SCALE` = 10⁴ means
-/// `100% = 10_000 bps`. Mirrors `MARGIN_SCALE` from `openhl-liquidation`
-/// to keep all openhl `× / 10_000` arithmetic at the same magnitude.
+/// `100% = 10_000 bps`. Mirrors `MARGIN_SCALE` from `princeps-liquidation`
+/// to keep all princeps `× / 10_000` arithmetic at the same magnitude.
 pub const DEVIATION_SCALE: u32 = 10_000;
 
 /// Identifier for a price publisher. The integer carries no semantics —
 /// the bridge picks per-deployment IDs (e.g., 1 = Binance spot, 2 =
 /// Coinbase spot, 3 = OKX spot). Determinism only requires that all
-/// validators agree on the mapping; openhl doesn't dictate it.
+/// validators agree on the mapping; princeps doesn't dictate it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FeedId(pub u32);
 
@@ -152,7 +152,7 @@ pub struct OracleParams {
     /// Single-feed deviation cap (bps from the median). A feed whose
     /// price differs from the initial median by more than this is
     /// dropped before the final median is recomputed. Hyperliquid-style
-    /// default: 50 bps (0.5%); openhl's `hyperliquid_default` uses 100
+    /// default: 50 bps (0.5%); princeps's `hyperliquid_default` uses 100
     /// bps for a slightly looser v0.
     pub max_deviation_bps: u32,
 }
@@ -206,7 +206,7 @@ pub enum ObservationError {
 /// [`crate::state::OracleState::refresh`].
 ///
 /// On any variant the caller must decide whether to halt the chain
-/// (conservative) or reuse the previous price (permissive). v0 openhl
+/// (conservative) or reuse the previous price (permissive). v0 princeps
 /// callers should halt; production hardening can layer policy on top.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AggregationError {

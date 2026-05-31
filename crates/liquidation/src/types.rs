@@ -2,13 +2,13 @@
 //!
 //! Pure data — no I/O, no allocation. Every type is `Copy`-friendly so the
 //! engine can be invoked on snapshots taken at the bridge layer without
-//! lifetime gymnastics. The convention follows `openhl-funding`: the
+//! lifetime gymnastics. The convention follows `princeps-funding`: the
 //! liquidation crate never owns mutable state in Stage 10a; it computes
 //! over snapshots that the caller assembled.
 //!
 //! ### Why fixed-point integers, not floats
 //!
-//! Same answer as `openhl-funding`: consensus determinism. Every validator
+//! Same answer as `princeps-funding`: consensus determinism. Every validator
 //! must reach the same `MarginHealth` from the same inputs, and float
 //! arithmetic varies bit-for-bit across compilers and CPUs. We use signed
 //! integers scaled by [`MARGIN_SCALE`] (basis points, 10⁴) for margin

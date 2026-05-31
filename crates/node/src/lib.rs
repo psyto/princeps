@@ -1,4 +1,4 @@
-//! `openhl-node` — integration coordinator for the openhl L1 (Stage 13).
+//! `princeps-node` — integration coordinator for the princeps L1 (Stage 13).
 //!
 //! No new state machines, no new pure-compute primitives. This crate
 //! is the **composition layer**: it owns one [`OracleState`], one
@@ -9,7 +9,7 @@
 //!
 //! ### What `tick` does
 //!
-//! Each block the bridge calls [`OpenHlNode::tick`] with:
+//! Each block the bridge calls [`PrincepsNode::tick`] with:
 //!   - `block_time` / `block_height` — current chain time/height.
 //!   - `mark` — the current top-of-book mark price (from the CLOB).
 //!   - `account_snapshots` — every non-flat account in the market
@@ -55,10 +55,10 @@
 //!
 //! Booting Reth + the consensus bridge is `crates/evm`'s
 //! `LiveRethEvmBridge` (in production-shape since Stage 9d).
-//! `openhl-node` is one level above that: the per-block state-machine
+//! `princeps-node` is one level above that: the per-block state-machine
 //! driver that the bridge calls into. Splitting the Reth-side
-//! composition (in `evm`) from the openhl-side composition (here)
-//! keeps each layer independently testable. The `bin/openhl` binary
+//! composition (in `evm`) from the princeps-side composition (here)
+//! keeps each layer independently testable. The `bin/princeps` binary
 //! will own wiring of these two layers together.
 
 use princeps_funding::{FundingClock, FundingParams, FundingTick, MarkPrice, Position};
@@ -76,7 +76,7 @@ use serde::{Deserialize, Serialize};
 /// Static configuration for the node. Set once at chain genesis;
 /// changing values mid-chain would fork the network.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct OpenHlNodeConfig {
+pub struct PrincepsNodeConfig {
     /// Seconds between automatic oracle refreshes. The tick triggers
     /// a refresh when `block_time >= last_refresh + interval`.
     pub oracle_refresh_interval_secs: u64,
@@ -96,7 +96,7 @@ pub struct OpenHlNodeConfig {
     pub run_adl_on_unfilled_deficit: bool,
 }
 
-impl OpenHlNodeConfig {
+impl PrincepsNodeConfig {
     /// Hyperliquid-shape defaults that match the worked examples in
     /// the rethlab Perp Primer course. Real deployments override.
     #[must_use]
@@ -130,9 +130,9 @@ pub struct TickInput<'a> {
     pub vault_total_assets: i64,
 }
 
-/// Snapshot of the [`OpenHlNode`]'s runtime state, for restart-time
+/// Snapshot of the [`PrincepsNode`]'s runtime state, for restart-time
 /// resume (Stage 14e). Saved to disk by the binary alongside the
-/// bridge's chain snapshot; restored via [`OpenHlNode::load_snapshot`]
+/// bridge's chain snapshot; restored via [`PrincepsNode::load_snapshot`]
 /// on the next boot before the engine app loop starts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoordinatorSnapshot {
@@ -196,11 +196,11 @@ pub struct TickReport {
     pub funding: Option<FundingTick>,
 }
 
-/// The integration coordinator. One [`OpenHlNode`] per deployed
+/// The integration coordinator. One [`PrincepsNode`] per deployed
 /// market — multi-market deployments instantiate one per market.
 #[derive(Debug, Clone)]
-pub struct OpenHlNode {
-    config: OpenHlNodeConfig,
+pub struct PrincepsNode {
+    config: PrincepsNodeConfig,
     oracle: OracleState,
     scanner: LiquidationScanner,
     vault: VaultState,
@@ -208,12 +208,12 @@ pub struct OpenHlNode {
     last_oracle_refresh_at: Option<u64>,
 }
 
-impl OpenHlNode {
+impl PrincepsNode {
     /// Construct a fresh node from config. The oracle, scanner, and
     /// vault all start in their empty states (no feeds, no insurance
     /// fund, no shares).
     #[must_use]
-    pub fn new(config: OpenHlNodeConfig) -> Self {
+    pub fn new(config: PrincepsNodeConfig) -> Self {
         let oracle = OracleState::new(config.oracle_params);
         let scanner = LiquidationScanner::with_empty_fund(config.liquidation_params);
         let vault = VaultState::new(config.vault_params);
@@ -232,7 +232,7 @@ impl OpenHlNode {
     /// Construct a node from an existing insurance-fund balance —
     /// supports resuming from a snapshot or genesis-seeding the fund.
     #[must_use]
-    pub fn with_insurance_fund(config: OpenHlNodeConfig, fund: InsuranceFund) -> Self {
+    pub fn with_insurance_fund(config: PrincepsNodeConfig, fund: InsuranceFund) -> Self {
         let oracle = OracleState::new(config.oracle_params);
         let scanner = LiquidationScanner::new(config.liquidation_params, fund);
         let vault = VaultState::new(config.vault_params);
@@ -249,7 +249,7 @@ impl OpenHlNode {
 
     /// Borrow the config.
     #[must_use]
-    pub const fn config(&self) -> &OpenHlNodeConfig {
+    pub const fn config(&self) -> &PrincepsNodeConfig {
         &self.config
     }
 
@@ -404,7 +404,7 @@ impl OpenHlNode {
     }
 
     /// Apply a [`CoordinatorSnapshot`] to this node's runtime state.
-    /// Used immediately after `OpenHlNode::new` to resume from a prior
+    /// Used immediately after `PrincepsNode::new` to resume from a prior
     /// run's persisted snapshot. Publisher registrations and oracle
     /// feed observations are NOT restored — those flow back through
     /// `register_publisher` and `ingest_signed_observation` at boot.
@@ -454,8 +454,8 @@ mod tests {
     use super::*;
     use princeps_funding::{IndexPrice, Notional, PositionSize};
 
-    fn default_node() -> OpenHlNode {
-        OpenHlNode::new(OpenHlNodeConfig::hyperliquid_default())
+    fn default_node() -> PrincepsNode {
+        PrincepsNode::new(PrincepsNodeConfig::hyperliquid_default())
     }
 
     fn snapshot(account: u64, size: i64, entry: u64, collateral: i64) -> AccountSnapshot {
@@ -482,8 +482,8 @@ mod tests {
     fn snapshot_round_trips_load_bearing_state() {
         // Build up some non-default state, snapshot it, restore on a
         // fresh node, and assert the load-bearing fields match.
-        let mut node = OpenHlNode::with_insurance_fund(
-            OpenHlNodeConfig::hyperliquid_default(),
+        let mut node = PrincepsNode::with_insurance_fund(
+            PrincepsNodeConfig::hyperliquid_default(),
             InsuranceFund::new(750),
         );
         assert_eq!(node.scanner().fund_balance(), 750);
@@ -537,8 +537,8 @@ mod tests {
 
     #[test]
     fn with_insurance_fund_seeds_balance() {
-        let node = OpenHlNode::with_insurance_fund(
-            OpenHlNodeConfig::hyperliquid_default(),
+        let node = PrincepsNode::with_insurance_fund(
+            PrincepsNodeConfig::hyperliquid_default(),
             InsuranceFund::new(50_000),
         );
         assert_eq!(node.scanner().fund_balance(), 50_000);
@@ -645,9 +645,9 @@ mod tests {
 
     #[test]
     fn tick_skips_adl_when_config_opts_out() {
-        let mut config = OpenHlNodeConfig::hyperliquid_default();
+        let mut config = PrincepsNodeConfig::hyperliquid_default();
         config.run_adl_on_unfilled_deficit = false;
-        let mut node = OpenHlNode::new(config);
+        let mut node = PrincepsNode::new(config);
         let accounts = vec![snapshot(1, 1, 100, 10)]; // underwater
         let report = node.tick(TickInput {
             block_height: 1,
@@ -700,8 +700,8 @@ mod tests {
     #[test]
     fn tick_is_deterministic() {
         let make = || {
-            let mut n = OpenHlNode::with_insurance_fund(
-                OpenHlNodeConfig::hyperliquid_default(),
+            let mut n = PrincepsNode::with_insurance_fund(
+                PrincepsNodeConfig::hyperliquid_default(),
                 InsuranceFund::new(1_000),
             );
             n.vault_mut().deposit(500).unwrap();

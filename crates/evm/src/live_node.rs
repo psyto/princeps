@@ -154,7 +154,7 @@ impl<P> LiveRethEvmBridge<P> {
 
     /// Submit an order to the CLOB. Resulting fills are buffered in
     /// `pending_fills` until the next `build_payload` drains them,
-    /// AND (Stage 16b) routed through `openhl-clearing::apply_fill`
+    /// AND (Stage 16b) routed through `princeps-clearing::apply_fill`
     /// to update per-account position + collateral state.
     pub fn submit_order(&self, order: Order) -> FillResult {
         let mut book = self.clob.lock().expect("clob mutex poisoned");
@@ -300,7 +300,7 @@ impl<P> LiveRethEvmBridge<P> {
     /// Returns `None` when either side of the book is empty: a one-sided
     /// book has no midpoint, and the caller (Stage 14c integration
     /// coordinator) is responsible for the fallback policy. Per the
-    /// `TickInput::mark` docstring on `openhl-node`, the mark is
+    /// `TickInput::mark` docstring on `princeps-node`, the mark is
     /// strictly CLOB-derived and must **not** be conflated with the
     /// oracle's aggregated index price.
     #[must_use]
@@ -1267,7 +1267,7 @@ mod tests {
         assert!(empty_fills_again.is_empty(), "earlier payload not retroactively filled");
     }
 
-    /// **Stage 9d**: bootstrap a Reth node WITH `OpenHlExecutorBuilder` (so its
+    /// **Stage 9d**: bootstrap a Reth node WITH `PrincepsExecutorBuilder` (so its
     /// EVM has our CLOB precompiles registered), construct a `LiveRethEvmBridge`
     /// against that node's provider, submit an order via the bridge — verify
     /// that the precompile module's process-global `CLOB_STATE` now reflects
@@ -1277,10 +1277,10 @@ mod tests {
     /// node's EVM would see.
     ///
     /// Doesn't yet invoke the precompile via RPC `eth_call` — that's deferred
-    /// indefinitely (validates Reth's plumbing rather than openhl behavior).
+    /// indefinitely (validates Reth's plumbing rather than princeps behavior).
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn bridge_against_custom_evm_node_shares_clob_with_precompile() {
-        use crate::OpenHlExecutorBuilder;
+        use crate::PrincepsExecutorBuilder;
         use crate::precompiles::{
             CLOB_PLACE_ORDER, current_best_bid, uninstall_clob, uninstall_fill_sink,
         };
@@ -1300,7 +1300,7 @@ mod tests {
         let handle = NodeBuilder::new(node_config)
             .testing_node(runtime)
             .with_types::<EthereumNode>()
-            .with_components(EthereumNode::components().executor(OpenHlExecutorBuilder))
+            .with_components(EthereumNode::components().executor(PrincepsExecutorBuilder))
             .with_add_ons(EthereumAddOns::default())
             .launch()
             .await
@@ -1402,7 +1402,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn deposit_precompile_mutates_bridge_accounts() {
         use crate::precompiles::{deposit, uninstall_accounts, uninstall_clob, uninstall_fill_sink};
-        use crate::OpenHlExecutorBuilder;
+        use crate::PrincepsExecutorBuilder;
         use princeps_clob::AccountId;
         use princeps_funding::Notional;
         use reth_node_ethereum::node::EthereumAddOns;
@@ -1420,7 +1420,7 @@ mod tests {
         let handle = NodeBuilder::new(node_config)
             .testing_node(runtime)
             .with_types::<EthereumNode>()
-            .with_components(EthereumNode::components().executor(OpenHlExecutorBuilder))
+            .with_components(EthereumNode::components().executor(PrincepsExecutorBuilder))
             .with_add_ons(EthereumAddOns::default())
             .launch()
             .await
@@ -1479,7 +1479,7 @@ mod tests {
         use crate::precompiles::{
             deposit, uninstall_accounts, uninstall_clob, uninstall_fill_sink, withdraw,
         };
-        use crate::OpenHlExecutorBuilder;
+        use crate::PrincepsExecutorBuilder;
         use princeps_clob::AccountId;
         use princeps_funding::Notional;
         use reth_node_ethereum::node::EthereumAddOns;
@@ -1495,7 +1495,7 @@ mod tests {
         let handle = NodeBuilder::new(node_config)
             .testing_node(runtime)
             .with_types::<EthereumNode>()
-            .with_components(EthereumNode::components().executor(OpenHlExecutorBuilder))
+            .with_components(EthereumNode::components().executor(PrincepsExecutorBuilder))
             .with_add_ons(EthereumAddOns::default())
             .launch()
             .await
@@ -1556,7 +1556,7 @@ mod tests {
     /// This test closes that gap. We deploy a 26-byte wrapper that forwards
     /// its calldata to `OPENHL_DEPOSIT` via `CALL` and returns the precompile's
     /// 32-byte response, then execute a transaction against it through the
-    /// same `OpenHlEvmFactory` Reth wires into every block. The transaction
+    /// same `PrincepsEvmFactory` Reth wires into every block. The transaction
     /// succeeds, its return matches what the precompile produced, AND the
     /// bridge's account map carries the credit — proving the bytecode →
     /// `CALL` → `princeps_precompiles` dispatch → state mutation path is whole.
@@ -1569,14 +1569,14 @@ mod tests {
     /// `#[ignore]`: the precompile module's `ACCOUNTS_STATE` is a process
     /// global. Any other test that constructs a `LiveRethEvmBridge` in
     /// parallel will overwrite it, derailing this test's precompile call.
-    /// Run via `cargo test -p openhl-evm -- --ignored --test-threads=1`.
+    /// Run via `cargo test -p princeps-evm -- --ignored --test-threads=1`.
     #[test]
     #[ignore]
     fn deposit_via_evm_bytecode_mutates_bridge_accounts() {
         use crate::precompiles::{
             uninstall_accounts, uninstall_clob, uninstall_fill_sink, OPENHL_DEPOSIT,
         };
-        use crate::OpenHlEvmFactory;
+        use crate::PrincepsEvmFactory;
         use alloy_evm::revm::{
             context::{result::ExecutionResult, TxEnv},
             database::{CacheDB, EmptyDB},
@@ -1622,10 +1622,10 @@ mod tests {
             },
         );
 
-        // Same factory Reth installs via `OpenHlExecutorBuilder`. Default
+        // Same factory Reth installs via `PrincepsExecutorBuilder`. Default
         // `EvmEnv` selects `SpecId::OSAKA`, which dispatches to the prague
         // branch of `precompiles_for` — our precompiles get registered.
-        let mut evm = OpenHlEvmFactory.create_evm(db, EvmEnv::default());
+        let mut evm = PrincepsEvmFactory.create_evm(db, EvmEnv::default());
 
         // Deposit calldata: (uint64 account=42, int64 amount=1000).
         let mut calldata = vec![0u8; 64];
@@ -1682,7 +1682,7 @@ mod tests {
         use crate::precompiles::{
             uninstall_accounts, uninstall_clob, uninstall_fill_sink, OPENHL_WITHDRAW,
         };
-        use crate::OpenHlEvmFactory;
+        use crate::PrincepsEvmFactory;
         use alloy_evm::revm::{
             context::{result::ExecutionResult, TxEnv},
             database::{CacheDB, EmptyDB},
@@ -1723,7 +1723,7 @@ mod tests {
             },
         );
 
-        let mut evm = OpenHlEvmFactory.create_evm(db, EvmEnv::default());
+        let mut evm = PrincepsEvmFactory.create_evm(db, EvmEnv::default());
 
         // Withdraw calldata: (uint64 account=9, uint64 amount=750).
         let mut calldata = vec![0u8; 64];
@@ -1775,7 +1775,7 @@ mod tests {
     /// ```
     ///
     /// The precompile address is encoded into bytes 16..18 (the `PUSH2`
-    /// operand). All known openhl precompile addresses fit in 16 bits
+    /// operand). All known princeps precompile addresses fit in 16 bits
     /// (`0x0c1b`..`0x0c1e`), so a fixed `PUSH2` is enough.
     fn wrapper_bytecode_for(precompile: alloy_primitives::Address) -> Vec<u8> {
         let raw = precompile.into_array();
@@ -1812,7 +1812,7 @@ mod tests {
 
     /// Variant of [`wrapper_bytecode_for`] that replaces the terminating
     /// `RETURN` with `REVERT`. The precompile call still executes (and
-    /// without [`OpenHlRevertGuard`] would still mutate the bridge's
+    /// without [`PrincepsRevertGuard`] would still mutate the bridge's
     /// account map), but the calling frame reverts — so a revert-aware
     /// EVM should roll the precompile mutation back.
     fn reverting_wrapper_bytecode_for(precompile: alloy_primitives::Address) -> Vec<u8> {
@@ -1825,7 +1825,7 @@ mod tests {
 
     /// **Stage 17i**: when a contract calls the deposit precompile and
     /// then `REVERT`s, the precompile's mutation must roll back. The
-    /// [`OpenHlRevertGuard`] inspector implements this by snapshotting
+    /// [`PrincepsRevertGuard`] inspector implements this by snapshotting
     /// the bridge globals at every call-frame entry and restoring on
     /// revert. Without it, the deposit would land in `bridge.accounts`
     /// even though the EVM rolled back the calling tx — a real
@@ -1841,10 +1841,10 @@ mod tests {
     #[ignore]
     fn deposit_via_evm_bytecode_rolls_back_on_revert() {
         use crate::precompiles::{
-            uninstall_accounts, uninstall_clob, uninstall_fill_sink, OpenHlRevertGuard,
+            uninstall_accounts, uninstall_clob, uninstall_fill_sink, PrincepsRevertGuard,
             OPENHL_DEPOSIT,
         };
-        use crate::OpenHlEvmFactory;
+        use crate::PrincepsEvmFactory;
         use alloy_evm::revm::{
             context::{result::ExecutionResult, TxEnv},
             database::{CacheDB, EmptyDB},
@@ -1884,8 +1884,8 @@ mod tests {
             },
         );
 
-        let guard = OpenHlRevertGuard::new();
-        let mut evm = OpenHlEvmFactory.create_evm_with_inspector(db, EvmEnv::default(), guard);
+        let guard = PrincepsRevertGuard::new();
+        let mut evm = PrincepsEvmFactory.create_evm_with_inspector(db, EvmEnv::default(), guard);
         evm.enable_inspector();
 
         // (uint64 account=42, int64 amount=1000).
@@ -1923,7 +1923,7 @@ mod tests {
         // the revert guard, account 42 would carry collateral 1000.
         assert!(
             bridge.accounts_snapshot().is_empty(),
-            "OpenHlRevertGuard must roll back the precompile's mutation on REVERT",
+            "PrincepsRevertGuard must roll back the precompile's mutation on REVERT",
         );
 
         uninstall_accounts();
@@ -1931,8 +1931,8 @@ mod tests {
         uninstall_fill_sink();
     }
 
-    /// **Stage 17k**: production wiring. `OpenHlEvmFactory::create_evm`
-    /// now installs `OpenHlRevertGuard` by default — no
+    /// **Stage 17k**: production wiring. `PrincepsEvmFactory::create_evm`
+    /// now installs `PrincepsRevertGuard` by default — no
     /// `create_evm_with_inspector` call, no explicit guard, no
     /// `evm.enable_inspector()`. Reth's executor invokes
     /// `create_evm` for every block, so this is the path that
@@ -1946,7 +1946,7 @@ mod tests {
         use crate::precompiles::{
             uninstall_accounts, uninstall_clob, uninstall_fill_sink, OPENHL_DEPOSIT,
         };
-        use crate::OpenHlEvmFactory;
+        use crate::PrincepsEvmFactory;
         use alloy_evm::revm::{
             context::{result::ExecutionResult, TxEnv},
             database::{CacheDB, EmptyDB},
@@ -1986,7 +1986,7 @@ mod tests {
         // The key difference vs 17i: `create_evm` (no explicit
         // inspector), no enable_inspector() call. This is what
         // Reth's BlockExecutor uses on every block.
-        let mut evm = OpenHlEvmFactory.create_evm(db, EvmEnv::default());
+        let mut evm = PrincepsEvmFactory.create_evm(db, EvmEnv::default());
 
         let mut calldata = vec![0u8; 64];
         calldata[24..32].copy_from_slice(&42u64.to_be_bytes());
@@ -2024,10 +2024,10 @@ mod tests {
     #[ignore]
     fn deposit_via_evm_bytecode_persists_on_return() {
         use crate::precompiles::{
-            uninstall_accounts, uninstall_clob, uninstall_fill_sink, OpenHlRevertGuard,
+            uninstall_accounts, uninstall_clob, uninstall_fill_sink, PrincepsRevertGuard,
             OPENHL_DEPOSIT,
         };
-        use crate::OpenHlEvmFactory;
+        use crate::PrincepsEvmFactory;
         use alloy_evm::revm::{
             context::{result::ExecutionResult, TxEnv},
             database::{CacheDB, EmptyDB},
@@ -2065,8 +2065,8 @@ mod tests {
             },
         );
 
-        let guard = OpenHlRevertGuard::new();
-        let mut evm = OpenHlEvmFactory.create_evm_with_inspector(db, EvmEnv::default(), guard);
+        let guard = PrincepsRevertGuard::new();
+        let mut evm = PrincepsEvmFactory.create_evm_with_inspector(db, EvmEnv::default(), guard);
         evm.enable_inspector();
 
         let mut calldata = vec![0u8; 64];
@@ -2115,7 +2115,7 @@ mod tests {
     /// is the next staging chunk after fills become EVM transactions.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn commit_sends_forkchoice_to_engine_when_handle_installed() {
-        use crate::OpenHlExecutorBuilder;
+        use crate::PrincepsExecutorBuilder;
         use crate::precompiles::{uninstall_clob, uninstall_fill_sink};
         use reth_node_ethereum::node::EthereumAddOns;
 
@@ -2129,7 +2129,7 @@ mod tests {
         let handle = NodeBuilder::new(node_config)
             .testing_node(runtime)
             .with_types::<EthereumNode>()
-            .with_components(EthereumNode::components().executor(OpenHlExecutorBuilder))
+            .with_components(EthereumNode::components().executor(PrincepsExecutorBuilder))
             .with_add_ons(EthereumAddOns::default())
             .launch()
             .await

@@ -8,7 +8,7 @@
 //! ### Invariants
 //!
 //! - `feeds[k].timestamp` is the publisher-reported time of the
-//!   stored observation, not when openhl ingested it. Stored as-is
+//!   stored observation, not when princeps ingested it. Stored as-is
 //!   for staleness checking against block time.
 //! - `current` is `Some` only after the first successful [`Self::refresh`].
 //!   Until then, the bridge has no trusted price and must either halt

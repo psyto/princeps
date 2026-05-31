@@ -7,19 +7,19 @@
 use informalsystems_malachitebft_core_types::{SignedMessage, SigningProvider};
 use informalsystems_malachitebft_signing_ed25519::{PrivateKey, PublicKey, Signature};
 
-use crate::context::OpenHlContext;
+use crate::context::PrincepsContext;
 use crate::signing::{
     proposal_signing_bytes, sign_proposal as sign_proposal_with,
     sign_vote as sign_vote_with, vote_signing_bytes,
 };
-use crate::types::{OpenHlProposal, OpenHlProposalPart, OpenHlVote};
+use crate::types::{PrincepsProposal, PrincepsProposalPart, PrincepsVote};
 
 #[derive(Debug)]
-pub struct OpenHlSigningProvider {
+pub struct PrincepsSigningProvider {
     private_key: PrivateKey,
 }
 
-impl OpenHlSigningProvider {
+impl PrincepsSigningProvider {
     #[must_use]
     pub const fn new(private_key: PrivateKey) -> Self {
         Self { private_key }
@@ -31,14 +31,14 @@ impl OpenHlSigningProvider {
     }
 }
 
-impl SigningProvider<OpenHlContext> for OpenHlSigningProvider {
-    fn sign_vote(&self, vote: OpenHlVote) -> SignedMessage<OpenHlContext, OpenHlVote> {
+impl SigningProvider<PrincepsContext> for PrincepsSigningProvider {
+    fn sign_vote(&self, vote: PrincepsVote) -> SignedMessage<PrincepsContext, PrincepsVote> {
         sign_vote_with(vote, &self.private_key)
     }
 
     fn verify_signed_vote(
         &self,
-        vote: &OpenHlVote,
+        vote: &PrincepsVote,
         signature: &Signature,
         public_key: &PublicKey,
     ) -> bool {
@@ -47,14 +47,14 @@ impl SigningProvider<OpenHlContext> for OpenHlSigningProvider {
 
     fn sign_proposal(
         &self,
-        proposal: OpenHlProposal,
-    ) -> SignedMessage<OpenHlContext, OpenHlProposal> {
+        proposal: PrincepsProposal,
+    ) -> SignedMessage<PrincepsContext, PrincepsProposal> {
         sign_proposal_with(proposal, &self.private_key)
     }
 
     fn verify_signed_proposal(
         &self,
-        proposal: &OpenHlProposal,
+        proposal: &PrincepsProposal,
         signature: &Signature,
         public_key: &PublicKey,
     ) -> bool {
@@ -65,12 +65,12 @@ impl SigningProvider<OpenHlContext> for OpenHlSigningProvider {
 
     fn sign_proposal_part(
         &self,
-        part: OpenHlProposalPart,
-    ) -> SignedMessage<OpenHlContext, OpenHlProposalPart> {
+        part: PrincepsProposalPart,
+    ) -> SignedMessage<PrincepsContext, PrincepsProposalPart> {
         // Stage 18a: parts now carry the proposer's encoded block bytes.
         // Sign a serde-JSON serialization so the receiving validator can
         // verify the proposer authored these exact bytes. Matches the
-        // codec's wire format for `OpenHlProposalPart`.
+        // codec's wire format for `PrincepsProposalPart`.
         let bytes = serde_json::to_vec(&part).expect("proposal-part serialisation");
         let sig = self.private_key.sign(&bytes);
         SignedMessage::new(part, sig)
@@ -78,7 +78,7 @@ impl SigningProvider<OpenHlContext> for OpenHlSigningProvider {
 
     fn verify_signed_proposal_part(
         &self,
-        part: &OpenHlProposalPart,
+        part: &PrincepsProposalPart,
         signature: &Signature,
         public_key: &PublicKey,
     ) -> bool {
@@ -88,7 +88,7 @@ impl SigningProvider<OpenHlContext> for OpenHlSigningProvider {
         public_key.verify(&bytes, signature).is_ok()
     }
 
-    fn sign_vote_extension(&self, ext: ()) -> SignedMessage<OpenHlContext, ()> {
+    fn sign_vote_extension(&self, ext: ()) -> SignedMessage<PrincepsContext, ()> {
         // Vote extensions are unused at v0 (Context::Extension = ()).
         let sig = self.private_key.sign(&[]);
         SignedMessage::new(ext, sig)
@@ -107,34 +107,34 @@ impl SigningProvider<OpenHlContext> for OpenHlSigningProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{OpenHlAddress, OpenHlHeight, OpenHlValue};
+    use crate::types::{PrincepsAddress, PrincepsHeight, PrincepsValue};
     use informalsystems_malachitebft_core_types::{NilOrVal, Round, VoteType};
     use princeps_types::BlockHash;
     use rand::rngs::OsRng;
 
-    fn provider() -> (OpenHlSigningProvider, PublicKey) {
+    fn provider() -> (PrincepsSigningProvider, PublicKey) {
         let sk = PrivateKey::generate(OsRng);
         let pk = sk.public_key();
-        (OpenHlSigningProvider::new(sk), pk)
+        (PrincepsSigningProvider::new(sk), pk)
     }
 
-    fn sample_vote() -> OpenHlVote {
-        OpenHlVote {
-            height: OpenHlHeight(1),
+    fn sample_vote() -> PrincepsVote {
+        PrincepsVote {
+            height: PrincepsHeight(1),
             round: Round::new(0),
             value_id: NilOrVal::Val(BlockHash([0x42; 32])),
             vote_type: VoteType::Prevote,
-            address: OpenHlAddress([0xaa; 20]),
+            address: PrincepsAddress([0xaa; 20]),
         }
     }
 
-    fn sample_proposal() -> OpenHlProposal {
-        OpenHlProposal {
-            height: OpenHlHeight(1),
+    fn sample_proposal() -> PrincepsProposal {
+        PrincepsProposal {
+            height: PrincepsHeight(1),
             round: Round::new(0),
-            value: OpenHlValue(BlockHash([0x42; 32])),
+            value: PrincepsValue(BlockHash([0x42; 32])),
             pol_round: Round::Nil,
-            address: OpenHlAddress([0xaa; 20]),
+            address: PrincepsAddress([0xaa; 20]),
         }
     }
 
@@ -170,7 +170,7 @@ mod tests {
         let proposal = sample_proposal();
         let signed = sp.sign_proposal(proposal.clone());
         let mut tampered = proposal;
-        tampered.value = OpenHlValue(BlockHash([0x99; 32]));
+        tampered.value = PrincepsValue(BlockHash([0x99; 32]));
         assert!(!sp.verify_signed_proposal(&tampered, &signed.signature, &pk));
     }
 
@@ -178,11 +178,11 @@ mod tests {
     fn proposal_part_sign_verify_round_trips() {
         use informalsystems_malachitebft_core_types::Round;
         let (sp, pk) = provider();
-        let part = OpenHlProposalPart {
-            height: OpenHlHeight(5),
+        let part = PrincepsProposalPart {
+            height: PrincepsHeight(5),
             round: Round::new(0),
             pol_round: Round::Nil,
-            proposer: OpenHlAddress([0xaa; 20]),
+            proposer: PrincepsAddress([0xaa; 20]),
             block_bytes: vec![1, 2, 3, 4],
         };
         let signed = sp.sign_proposal_part(part.clone());

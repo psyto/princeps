@@ -1,4 +1,4 @@
-//! `openhl-funding` — funding-rate state machine.
+//! `princeps-funding` — funding-rate state machine.
 //!
 //! Pure state machine: no I/O, no async, no networking. Funding is applied
 //! deterministically on a fixed cadence (see [`FundingClock`]); every tick is
@@ -15,7 +15,7 @@
 //! every account with an open position settles `position_size * mark * rate`
 //! in quote currency.
 //!
-//! Integration with the rest of openhl happens at the EVM bridge: settlement
+//! Integration with the rest of princeps happens at the EVM bridge: settlement
 //! deltas become balance updates that the bridge bundles into payloads. That
 //! integration lives in `crates/evm/`; the rate math and tick gating are here.
 

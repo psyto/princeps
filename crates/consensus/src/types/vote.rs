@@ -4,20 +4,20 @@ use informalsystems_malachitebft_core_types::{
 use princeps_types::BlockHash;
 use serde::{Deserialize, Serialize};
 
-use crate::context::OpenHlContext;
-use crate::types::{OpenHlAddress, OpenHlHeight};
+use crate::context::PrincepsContext;
+use crate::types::{PrincepsAddress, PrincepsHeight};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct OpenHlVote {
-    pub height: OpenHlHeight,
+pub struct PrincepsVote {
+    pub height: PrincepsHeight,
     pub round: Round,
     pub value_id: NilOrVal<BlockHash>,
     pub vote_type: VoteType,
-    pub address: OpenHlAddress,
+    pub address: PrincepsAddress,
 }
 
-impl VoteTrait<OpenHlContext> for OpenHlVote {
-    fn height(&self) -> OpenHlHeight {
+impl VoteTrait<PrincepsContext> for PrincepsVote {
+    fn height(&self) -> PrincepsHeight {
         self.height
     }
 
@@ -37,19 +37,19 @@ impl VoteTrait<OpenHlContext> for OpenHlVote {
         self.vote_type
     }
 
-    fn validator_address(&self) -> &OpenHlAddress {
+    fn validator_address(&self) -> &PrincepsAddress {
         &self.address
     }
 
-    fn extension(&self) -> Option<&SignedExtension<OpenHlContext>> {
+    fn extension(&self) -> Option<&SignedExtension<PrincepsContext>> {
         None
     }
 
-    fn take_extension(&mut self) -> Option<SignedExtension<OpenHlContext>> {
+    fn take_extension(&mut self) -> Option<SignedExtension<PrincepsContext>> {
         None
     }
 
-    fn extend(self, _extension: SignedExtension<OpenHlContext>) -> Self {
+    fn extend(self, _extension: SignedExtension<PrincepsContext>) -> Self {
         self
     }
 }

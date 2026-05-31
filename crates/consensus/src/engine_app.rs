@@ -38,8 +38,8 @@ use informalsystems_malachitebft_engine::util::streaming::StreamContent;
 use princeps_types::{BlockHash, PayloadAttrs};
 
 use crate::bridge::ConsensusBridge;
-use crate::context::OpenHlContext;
-use crate::types::{OpenHlHeight, OpenHlProposalPart, OpenHlValidatorSet, OpenHlValue};
+use crate::context::PrincepsContext;
+use crate::types::{PrincepsHeight, PrincepsProposalPart, PrincepsValidatorSet, PrincepsValue};
 
 const APP_REPLY_WAIT_LOG: &str = "engine_app: peer replied unsuccessfully (channel closed)";
 
@@ -49,7 +49,7 @@ const APP_REPLY_WAIT_LOG: &str = "engine_app: peer replied unsuccessfully (chann
 /// just hold onto the data until Fin arrives.
 #[derive(Default)]
 struct InProgressStream {
-    data: Option<OpenHlProposalPart>,
+    data: Option<PrincepsProposalPart>,
     fin_seen: bool,
 }
 
@@ -61,7 +61,7 @@ struct InProgressStream {
 ///
 /// `initial_parent` is the `BlockHash` of the block this engine should
 /// build on top of for its first decision. For a fresh chain, this is
-/// the execution-layer's genesis hash — `bin/openhl reth-devnet` queries
+/// the execution-layer's genesis hash — `bin/princeps reth-devnet` queries
 /// it from `ChainSpec::genesis_hash()` (Stage 13d). For a chain restart,
 /// callers pass the last decided hash from prior consensus state. Stub
 /// bridges that don't validate parent hashes (e.g., in unit tests) can
@@ -69,9 +69,9 @@ struct InProgressStream {
 /// zero hash.
 ///
 /// `initial_height` is the consensus height for the **first** decision
-/// this engine produces. Fresh chains start at `OpenHlHeight::INITIAL`
+/// this engine produces. Fresh chains start at `PrincepsHeight::INITIAL`
 /// (height 1). For a restart resuming from a prior committed chain
-/// (Stage 13i), callers pass `OpenHlHeight(prior_decisions + 1)` so
+/// (Stage 13i), callers pass `PrincepsHeight(prior_decisions + 1)` so
 /// consensus log lines and any future multi-validator peers see a
 /// height that continues the prior chain instead of restarting at 1.
 ///
@@ -88,16 +88,16 @@ struct InProgressStream {
 #[allow(clippy::too_many_arguments)] // 7 args, all load-bearing — see doc comments
 pub async fn run_engine_app<B, F>(
     bridge: Arc<B>,
-    mut channels: Channels<OpenHlContext>,
-    validator_set: OpenHlValidatorSet,
+    mut channels: Channels<PrincepsContext>,
+    validator_set: PrincepsValidatorSet,
     initial_parent: BlockHash,
-    initial_height: OpenHlHeight,
+    initial_height: PrincepsHeight,
     stop_after_decisions: usize,
     mut on_committed: F,
 ) -> eyre::Result<Vec<BlockHash>>
 where
     B: ConsensusBridge + 'static,
-    F: FnMut(BlockHash, OpenHlHeight, u64) -> eyre::Result<()> + Send,
+    F: FnMut(BlockHash, PrincepsHeight, u64) -> eyre::Result<()> + Send,
 {
     let mut decided: Vec<BlockHash> = Vec::new();
     let mut current_parent = initial_parent;
@@ -154,7 +154,7 @@ where
                 let block = bridge.payload_ready(id).await?;
                 block_times.insert(block.hash, block.timestamp);
 
-                let value = OpenHlValue(block.hash);
+                let value = PrincepsValue(block.hash);
                 let lpv =
                     informalsystems_malachitebft_app_channel::app::types::LocallyProposedValue::new(
                         height, round, value,
@@ -165,10 +165,10 @@ where
 
                 // Stage 18a: stream the block to followers. Encode via
                 // the bridge (opaque wire format), wrap in an
-                // `OpenHlProposalPart`, send a Data + Fin pair under a
+                // `PrincepsProposalPart`, send a Data + Fin pair under a
                 // fresh stream id.
                 let block_bytes = bridge.encode_proposed_block(id).await?;
-                let part = OpenHlProposalPart {
+                let part = PrincepsProposalPart {
                     height,
                     round,
                     pol_round: Round::Nil,
@@ -245,7 +245,7 @@ where
                         round: part.round,
                         valid_round: part.pol_round,
                         proposer: part.proposer,
-                        value: OpenHlValue(block.hash),
+                        value: PrincepsValue(block.hash),
                         validity: Validity::Valid,
                     })
                 } else {
@@ -336,7 +336,7 @@ fn default_attrs() -> PayloadAttrs {
 /// matters is uniqueness across this validator's outbound streams so
 /// follower-side reassembly can key on it cleanly.
 fn make_stream_id(
-    height: OpenHlHeight,
+    height: PrincepsHeight,
     round: Round,
     counter: &mut u64,
 ) -> StreamId {
@@ -351,15 +351,15 @@ fn make_stream_id(
 
 /// Pull the proposer address for `(height, round)` straight out of the
 /// validator set using the same selection rule
-/// [`OpenHlContext::select_proposer`] uses. Each engine_app instance
+/// [`PrincepsContext::select_proposer`] uses. Each engine_app instance
 /// only ever calls this for heights where IT is the proposer, so the
 /// result matches its own validator address — Malachite uses the
 /// embedded `proposer` for attribution when peers receive the part.
 fn select_proposer_address(
-    validator_set: &OpenHlValidatorSet,
-    height: OpenHlHeight,
+    validator_set: &PrincepsValidatorSet,
+    height: PrincepsHeight,
     round: Round,
-) -> crate::types::OpenHlAddress {
+) -> crate::types::PrincepsAddress {
     use informalsystems_malachitebft_core_types::ValidatorSet as _;
     let count = validator_set.count();
     assert!(count > 0, "validator set is empty");
@@ -377,8 +377,8 @@ fn select_proposer_address(
 mod tests {
     use super::*;
     use crate::bridge::BridgeError;
-    use crate::node::OpenHlNode;
-    use crate::types::{OpenHlAddress, OpenHlValidator};
+    use crate::node::PrincepsNode;
+    use crate::types::{PrincepsAddress, PrincepsValidator};
     use async_trait::async_trait;
     use informalsystems_malachitebft_app::node::{Node as _, NodeHandle as _};
     use informalsystems_malachitebft_app::events::TxEvent;
@@ -401,7 +401,7 @@ mod tests {
     }
 
     /// Test wire format for StubBridge — just the executed block. Symmetric
-    /// with `ProposedBlockWire` in `openhl-evm` (which also includes a
+    /// with `ProposedBlockWire` in `princeps-evm` (which also includes a
     /// Header), but the stub doesn't need a Header to satisfy its own
     /// commit/build_payload contract.
     #[derive(serde::Serialize, serde::Deserialize)]
@@ -474,15 +474,15 @@ mod tests {
         }
     }
 
-    fn make_test_node(home_dir: std::path::PathBuf) -> OpenHlNode {
+    fn make_test_node(home_dir: std::path::PathBuf) -> PrincepsNode {
         let sk = PrivateKey::generate(OsRng);
         let pk = sk.public_key();
         let digest = Sha256::digest(pk.as_bytes());
         let mut addr_bytes = [0u8; 20];
         addr_bytes.copy_from_slice(&digest[12..32]);
-        let address = OpenHlAddress(addr_bytes);
-        let validator_set = OpenHlValidatorSet::new(vec![OpenHlValidator::new(address, pk, 1)]);
-        OpenHlNode::new(sk, validator_set, home_dir, "openhl-engine-test")
+        let address = PrincepsAddress(addr_bytes);
+        let validator_set = PrincepsValidatorSet::new(vec![PrincepsValidator::new(address, pk, 1)]);
+        PrincepsNode::new(sk, validator_set, home_dir, "princeps-engine-test")
             .with_value_payload(informalsystems_malachitebft_config::ValuePayload::ProposalAndParts)
     }
 
@@ -549,7 +549,7 @@ mod tests {
             channels,
             validator_set,
             BlockHash([0u8; 32]),
-            OpenHlHeight::INITIAL,
+            PrincepsHeight::INITIAL,
             1,
             |_hash, _height, _block_time| Ok(()),
         ));
@@ -583,7 +583,7 @@ mod tests {
         handle.kill(None).await.unwrap();
     }
 
-    fn app_msg_name(msg: &AppMsg<OpenHlContext>) -> &'static str {
+    fn app_msg_name(msg: &AppMsg<PrincepsContext>) -> &'static str {
         match msg {
             AppMsg::ConsensusReady { .. } => "ConsensusReady",
             AppMsg::StartedRound { .. } => "StartedRound",
@@ -616,15 +616,15 @@ mod tests {
         let digest = Sha256::digest(pk.as_bytes());
         let mut addr_bytes = [0u8; 20];
         addr_bytes.copy_from_slice(&digest[12..32]);
-        let address = OpenHlAddress(addr_bytes);
-        let validator_set = OpenHlValidatorSet::new(vec![OpenHlValidator::new(address, pk, 1)]);
+        let address = PrincepsAddress(addr_bytes);
+        let validator_set = PrincepsValidatorSet::new(vec![PrincepsValidator::new(address, pk, 1)]);
 
         let app_task = tokio::spawn(run_engine_app(
             bridge,
             channels,
             validator_set,
             BlockHash([0u8; 32]),
-            OpenHlHeight(7),
+            PrincepsHeight(7),
             1,
             |_hash, _height, _block_time| Ok(()),
         ));
@@ -637,7 +637,7 @@ mod tests {
         drop(tx_consensus);
 
         let min_height = reply_rx.await.expect("history min reply");
-        assert_eq!(min_height, OpenHlHeight(7));
+        assert_eq!(min_height, PrincepsHeight(7));
 
         let err = app_task
             .await
@@ -670,15 +670,15 @@ mod tests {
         let digest = Sha256::digest(pk.as_bytes());
         let mut addr_bytes = [0u8; 20];
         addr_bytes.copy_from_slice(&digest[12..32]);
-        let address = OpenHlAddress(addr_bytes);
-        let validator_set = OpenHlValidatorSet::new(vec![OpenHlValidator::new(address, pk, 1)]);
+        let address = PrincepsAddress(addr_bytes);
+        let validator_set = PrincepsValidatorSet::new(vec![PrincepsValidator::new(address, pk, 1)]);
 
         let app_task = tokio::spawn(run_engine_app(
             bridge.clone(),
             channels,
             validator_set.clone(),
             BlockHash([0u8; 32]),
-            OpenHlHeight::INITIAL,
+            PrincepsHeight::INITIAL,
             1,
             |_hash, _height, _block_time| Ok(()),
         ));
@@ -686,7 +686,7 @@ mod tests {
         let (gv_tx, gv_rx) = tokio::sync::oneshot::channel();
         tx_consensus
             .send(AppMsg::GetValue {
-                height: OpenHlHeight::INITIAL,
+                height: PrincepsHeight::INITIAL,
                 round: Round::new(0),
                 timeout: Duration::from_secs(1),
                 reply: gv_tx,
@@ -706,7 +706,7 @@ mod tests {
         tx_consensus
             .send(AppMsg::Decided {
                 certificate: CommitCertificate {
-                    height: OpenHlHeight::INITIAL,
+                    height: PrincepsHeight::INITIAL,
                     round: Round::new(0),
                     value_id: BlockHash([0x42u8; 32]),
                     commit_signatures: Vec::new(),
@@ -755,15 +755,15 @@ mod tests {
         let digest = Sha256::digest(pk.as_bytes());
         let mut addr_bytes = [0u8; 20];
         addr_bytes.copy_from_slice(&digest[12..32]);
-        let address = OpenHlAddress(addr_bytes);
-        let validator_set = OpenHlValidatorSet::new(vec![OpenHlValidator::new(address, pk, 1)]);
+        let address = PrincepsAddress(addr_bytes);
+        let validator_set = PrincepsValidatorSet::new(vec![PrincepsValidator::new(address, pk, 1)]);
 
         let app_task = tokio::spawn(run_engine_app(
             bridge.clone(),
             channels,
             validator_set,
             BlockHash([0u8; 32]),
-            OpenHlHeight::INITIAL,
+            PrincepsHeight::INITIAL,
             1,
             |_hash, _height, _block_time| Ok(()),
         ));
@@ -772,7 +772,7 @@ mod tests {
         tx_consensus
             .send(AppMsg::Decided {
                 certificate: CommitCertificate {
-                    height: OpenHlHeight::INITIAL,
+                    height: PrincepsHeight::INITIAL,
                     round: Round::new(0),
                     value_id: BlockHash([0x42u8; 32]),
                     commit_signatures: Vec::new(),
@@ -831,15 +831,15 @@ mod tests {
         let digest = Sha256::digest(pk.as_bytes());
         let mut addr_bytes = [0u8; 20];
         addr_bytes.copy_from_slice(&digest[12..32]);
-        let address = OpenHlAddress(addr_bytes);
-        let validator_set = OpenHlValidatorSet::new(vec![OpenHlValidator::new(address, pk, 1)]);
+        let address = PrincepsAddress(addr_bytes);
+        let validator_set = PrincepsValidatorSet::new(vec![PrincepsValidator::new(address, pk, 1)]);
 
         let app_task = tokio::spawn(run_engine_app(
             bridge.clone(),
             channels,
             validator_set,
             BlockHash([0u8; 32]),
-            OpenHlHeight::INITIAL,
+            PrincepsHeight::INITIAL,
             1,
             |_hash, _height, _block_time| Ok(()),
         ));
@@ -856,8 +856,8 @@ mod tests {
             },
         })
         .unwrap();
-        let part = OpenHlProposalPart {
-            height: OpenHlHeight::INITIAL,
+        let part = PrincepsProposalPart {
+            height: PrincepsHeight::INITIAL,
             round: Round::new(0),
             pol_round: Round::Nil,
             proposer: address,
@@ -895,7 +895,7 @@ mod tests {
         tx_consensus
             .send(AppMsg::Decided {
                 certificate: CommitCertificate {
-                    height: OpenHlHeight::INITIAL,
+                    height: PrincepsHeight::INITIAL,
                     round: Round::new(0),
                     value_id: BlockHash([0x42u8; 32]),
                     commit_signatures: Vec::new(),

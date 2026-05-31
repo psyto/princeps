@@ -1,20 +1,20 @@
 use informalsystems_malachitebft_core_types::{Proposal, Round};
 use serde::{Deserialize, Serialize};
 
-use crate::context::OpenHlContext;
-use crate::types::{OpenHlAddress, OpenHlHeight, OpenHlValue};
+use crate::context::PrincepsContext;
+use crate::types::{PrincepsAddress, PrincepsHeight, PrincepsValue};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OpenHlProposal {
-    pub height: OpenHlHeight,
+pub struct PrincepsProposal {
+    pub height: PrincepsHeight,
     pub round: Round,
-    pub value: OpenHlValue,
+    pub value: PrincepsValue,
     pub pol_round: Round,
-    pub address: OpenHlAddress,
+    pub address: PrincepsAddress,
 }
 
-impl Proposal<OpenHlContext> for OpenHlProposal {
-    fn height(&self) -> OpenHlHeight {
+impl Proposal<PrincepsContext> for PrincepsProposal {
+    fn height(&self) -> PrincepsHeight {
         self.height
     }
 
@@ -22,11 +22,11 @@ impl Proposal<OpenHlContext> for OpenHlProposal {
         self.round
     }
 
-    fn value(&self) -> &OpenHlValue {
+    fn value(&self) -> &PrincepsValue {
         &self.value
     }
 
-    fn take_value(self) -> OpenHlValue {
+    fn take_value(self) -> PrincepsValue {
         self.value
     }
 
@@ -34,7 +34,7 @@ impl Proposal<OpenHlContext> for OpenHlProposal {
         self.pol_round
     }
 
-    fn validator_address(&self) -> &OpenHlAddress {
+    fn validator_address(&self) -> &PrincepsAddress {
         &self.address
     }
 }

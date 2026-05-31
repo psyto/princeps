@@ -9,7 +9,7 @@
 //!   - [`test_sign_observation`] (test-only) — produce a valid
 //!     signature for a fresh observation. Used in this crate's tests
 //!     and would be removed (or feature-gated) once an external
-//!     `openhl-oracle-test-utils` crate exists.
+//!     `princeps-oracle-test-utils` crate exists.
 //!
 //! ### Hash convention
 //!
@@ -21,7 +21,7 @@
 //!
 //! ### Why ECDSA over secp256k1 and not Ed25519
 //!
-//! openhl is an Ethereum-shape L1 (Reth + alloy). Every publisher
+//! princeps is an Ethereum-shape L1 (Reth + alloy). Every publisher
 //! integration in the broader Ethereum ecosystem already has
 //! secp256k1 keys; reusing that curve avoids forcing publishers to
 //! manage a second key.
@@ -56,7 +56,7 @@ pub fn verify_observation(
 
 #[cfg(test)]
 pub(crate) mod test_signing {
-    //! Test-only signing helpers. Publishers run external code; openhl
+    //! Test-only signing helpers. Publishers run external code; princeps
     //! only needs to verify, never sign — but tests need to produce
     //! authentic signed observations to exercise the verify path.
 

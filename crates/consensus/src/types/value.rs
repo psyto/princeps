@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 /// for block contents. Module 2 will extend this to carry the full block once
 /// the CLOB starts producing fills that need to be ordered alongside EVM txs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct OpenHlValue(pub BlockHash);
+pub struct PrincepsValue(pub BlockHash);
 
-impl Value for OpenHlValue {
+impl Value for PrincepsValue {
     type Id = BlockHash;
 
     fn id(&self) -> Self::Id {

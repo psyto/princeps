@@ -1,5 +1,5 @@
 //! `Node` trait implementation — describes our chain to Malachite's engine
-//! and provides the [`OpenHlNode::start`] entry point that calls
+//! and provides the [`PrincepsNode::start`] entry point that calls
 //! `malachitebft_app_channel::start_engine` to spawn the actor system.
 
 use std::path::PathBuf;
@@ -19,16 +19,16 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::timeout;
 use std::time::Duration;
 
-use crate::codec::OpenHlCodec;
-use crate::context::OpenHlContext;
-use crate::signing_provider::OpenHlSigningProvider;
-use crate::types::{OpenHlAddress, OpenHlHeight, OpenHlValidatorSet};
+use crate::codec::PrincepsCodec;
+use crate::context::PrincepsContext;
+use crate::signing_provider::PrincepsSigningProvider;
+use crate::types::{PrincepsAddress, PrincepsHeight, PrincepsValidatorSet};
 
 const DEFAULT_STARTUP_READY_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn spawn_consensus_forwarder(
-    mut raw_consensus: mpsc::Receiver<informalsystems_malachitebft_app_channel::AppMsg<OpenHlContext>>,
-    consensus_tx: mpsc::Sender<informalsystems_malachitebft_app_channel::AppMsg<OpenHlContext>>,
+    mut raw_consensus: mpsc::Receiver<informalsystems_malachitebft_app_channel::AppMsg<PrincepsContext>>,
+    consensus_tx: mpsc::Sender<informalsystems_malachitebft_app_channel::AppMsg<PrincepsContext>>,
 ) -> oneshot::Receiver<()> {
     let (ready_tx, ready_rx) = oneshot::channel::<()>();
     tokio::spawn(async move {
@@ -62,14 +62,14 @@ async fn await_startup_ready(
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct OpenHlConfig {
+pub struct PrincepsConfig {
     pub moniker: String,
     #[serde(flatten)]
     pub consensus: ConsensusConfig,
     pub value_sync: ValueSyncConfig,
 }
 
-impl OpenHlConfig {
+impl PrincepsConfig {
     #[must_use]
     pub fn new(moniker: impl Into<String>) -> Self {
         // Stage 18a: ProposalAndParts. The proposer streams the full
@@ -89,7 +89,7 @@ impl OpenHlConfig {
     }
 }
 
-impl NodeConfig for OpenHlConfig {
+impl NodeConfig for PrincepsConfig {
     fn moniker(&self) -> &str {
         &self.moniker
     }
@@ -102,18 +102,18 @@ impl NodeConfig for OpenHlConfig {
 }
 
 /// Genesis is a unit struct at v0 — the validator set is passed directly to
-/// `start_engine` rather than read from disk. When `OpenHL` grows a real
+/// `start_engine` rather than read from disk. When `Princeps` grows a real
 /// on-disk genesis format this becomes the `load_genesis()` return.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct OpenHlGenesis;
+pub struct PrincepsGenesis;
 
 /// Wire-friendly wrapper around the raw 32-byte Ed25519 private key.
 #[derive(Clone, Serialize, Deserialize)]
-pub struct OpenHlPrivateKeyFile {
+pub struct PrincepsPrivateKeyFile {
     pub bytes: [u8; 32],
 }
 
-impl OpenHlPrivateKeyFile {
+impl PrincepsPrivateKeyFile {
     #[must_use]
     pub fn from_private_key(sk: &PrivateKey) -> Self {
         Self {
@@ -127,42 +127,42 @@ impl OpenHlPrivateKeyFile {
     }
 }
 
-impl std::fmt::Debug for OpenHlPrivateKeyFile {
+impl std::fmt::Debug for PrincepsPrivateKeyFile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpenHlPrivateKeyFile")
+        f.debug_struct("PrincepsPrivateKeyFile")
             .field("bytes", &"[redacted]")
             .finish()
     }
 }
 
-/// Handle returned by [`OpenHlNode::start`]. Owns the engine actor system
+/// Handle returned by [`PrincepsNode::start`]. Owns the engine actor system
 /// and the channel handles for the (yet-to-be-implemented) app loop.
-pub struct OpenHlNodeHandle {
+pub struct PrincepsNodeHandle {
     engine: EngineHandle,
-    channels: Mutex<Option<Channels<OpenHlContext>>>,
-    events: TxEvent<OpenHlContext>,
+    channels: Mutex<Option<Channels<PrincepsContext>>>,
+    events: TxEvent<PrincepsContext>,
 }
 
-impl std::fmt::Debug for OpenHlNodeHandle {
+impl std::fmt::Debug for PrincepsNodeHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpenHlNodeHandle")
+        f.debug_struct("PrincepsNodeHandle")
             .field("engine", &"<EngineHandle>")
             .field("channels", &"<Channels>")
             .finish()
     }
 }
 
-impl OpenHlNodeHandle {
+impl PrincepsNodeHandle {
     /// Take ownership of the engine→app message channels. Returns None on
     /// the second call. Stage 6d will consume from this to drive the bridge.
-    pub async fn take_channels(&self) -> Option<Channels<OpenHlContext>> {
+    pub async fn take_channels(&self) -> Option<Channels<PrincepsContext>> {
         self.channels.lock().await.take()
     }
 }
 
 #[async_trait]
-impl NodeHandle<OpenHlContext> for OpenHlNodeHandle {
-    fn subscribe(&self) -> informalsystems_malachitebft_app::events::RxEvent<OpenHlContext> {
+impl NodeHandle<PrincepsContext> for PrincepsNodeHandle {
+    fn subscribe(&self) -> informalsystems_malachitebft_app::events::RxEvent<PrincepsContext> {
         self.events.subscribe()
     }
 
@@ -174,9 +174,9 @@ impl NodeHandle<OpenHlContext> for OpenHlNodeHandle {
 }
 
 #[derive(Clone, Debug)]
-pub struct OpenHlNode {
+pub struct PrincepsNode {
     pub private_key: PrivateKey,
-    pub validator_set: OpenHlValidatorSet,
+    pub validator_set: PrincepsValidatorSet,
     pub home_dir: PathBuf,
     pub moniker: String,
     /// Optional libp2p listen multiaddr override (Stage 13k). When
@@ -195,7 +195,7 @@ pub struct OpenHlNode {
     pub persistent_peers: Vec<String>,
     /// Optional override for Malachite value payload mode.
     ///
-    /// Production defaults to `ProposalOnly` (the OpenHL target shape), but
+    /// Production defaults to `ProposalOnly` (the Princeps target shape), but
     /// tests can force `ProposalAndParts` for better compatibility with the
     /// current upstream app-channel behaviors.
     pub value_payload: Option<ValuePayload>,
@@ -205,11 +205,11 @@ pub struct OpenHlNode {
     pub startup_ready_timeout: Option<Duration>,
 }
 
-impl OpenHlNode {
+impl PrincepsNode {
     #[must_use]
     pub fn new(
         private_key: PrivateKey,
-        validator_set: OpenHlValidatorSet,
+        validator_set: PrincepsValidatorSet,
         home_dir: PathBuf,
         moniker: impl Into<String>,
     ) -> Self {
@@ -226,7 +226,7 @@ impl OpenHlNode {
     }
 
     /// Override the libp2p listen multiaddr. See
-    /// [`OpenHlNode::listen_addr`]; typical production deployments
+    /// [`PrincepsNode::listen_addr`]; typical production deployments
     /// pass `/ip4/0.0.0.0/tcp/<port>` so peers can dial in.
     #[must_use]
     pub fn with_listen_addr(mut self, multiaddr: impl Into<String>) -> Self {
@@ -235,7 +235,7 @@ impl OpenHlNode {
     }
 
     /// Set the libp2p persistent-peer multiaddrs. See
-    /// [`OpenHlNode::persistent_peers`]; callers should filter out
+    /// [`PrincepsNode::persistent_peers`]; callers should filter out
     /// their own peer entry to avoid self-dial.
     #[must_use]
     pub fn with_persistent_peers<I, S>(mut self, peers: I) -> Self
@@ -271,26 +271,26 @@ impl OpenHlNode {
 }
 
 #[async_trait]
-impl Node for OpenHlNode {
-    type Context = OpenHlContext;
-    type Config = OpenHlConfig;
-    type Genesis = OpenHlGenesis;
-    type PrivateKeyFile = OpenHlPrivateKeyFile;
-    type SigningProvider = OpenHlSigningProvider;
-    type NodeHandle = OpenHlNodeHandle;
+impl Node for PrincepsNode {
+    type Context = PrincepsContext;
+    type Config = PrincepsConfig;
+    type Genesis = PrincepsGenesis;
+    type PrivateKeyFile = PrincepsPrivateKeyFile;
+    type SigningProvider = PrincepsSigningProvider;
+    type NodeHandle = PrincepsNodeHandle;
 
     fn get_home_dir(&self) -> PathBuf {
         self.home_dir.clone()
     }
 
     fn load_config(&self) -> eyre::Result<Self::Config> {
-        let mut cfg = OpenHlConfig::new(&self.moniker);
+        let mut cfg = PrincepsConfig::new(&self.moniker);
         if let Some(payload) = self.value_payload {
             cfg.consensus.value_payload = payload;
         }
         // listen_addr: ephemeral local port by default (fine for tests
         // and single-validator devnets), explicit override via
-        // `OpenHlNode::with_listen_addr` for multi-validator deployments.
+        // `PrincepsNode::with_listen_addr` for multi-validator deployments.
         let raw = self
             .listen_addr
             .as_deref()
@@ -312,11 +312,11 @@ impl Node for OpenHlNode {
         Ok(cfg)
     }
 
-    fn get_address(&self, pk: &PublicKey) -> OpenHlAddress {
+    fn get_address(&self, pk: &PublicKey) -> PrincepsAddress {
         let digest = Sha256::digest(pk.as_bytes());
         let mut addr = [0u8; 20];
         addr.copy_from_slice(&digest[12..32]);
-        OpenHlAddress(addr)
+        PrincepsAddress(addr)
     }
 
     fn get_public_key(&self, pk: &PrivateKey) -> PublicKey {
@@ -333,17 +333,17 @@ impl Node for OpenHlNode {
     }
 
     fn load_private_key_file(&self) -> eyre::Result<Self::PrivateKeyFile> {
-        Ok(OpenHlPrivateKeyFile::from_private_key(&self.private_key))
+        Ok(PrincepsPrivateKeyFile::from_private_key(&self.private_key))
     }
 
     fn load_genesis(&self) -> eyre::Result<Self::Genesis> {
         // Validator set is passed directly to start_engine; genesis carries
         // nothing else at v0.
-        Ok(OpenHlGenesis)
+        Ok(PrincepsGenesis)
     }
 
     fn get_signing_provider(&self, private_key: PrivateKey) -> Self::SigningProvider {
-        OpenHlSigningProvider::new(private_key)
+        PrincepsSigningProvider::new(private_key)
     }
 
     async fn start(&self) -> eyre::Result<Self::NodeHandle> {
@@ -351,12 +351,12 @@ impl Node for OpenHlNode {
         let validator_set = self.validator_set.clone();
 
         let (channels, engine) = informalsystems_malachitebft_app_channel::start_engine(
-            OpenHlContext,
+            PrincepsContext,
             self.clone(),
             cfg,
-            OpenHlCodec, // WAL
-            OpenHlCodec, // Network
-            Some(OpenHlHeight::INITIAL),
+            PrincepsCodec, // WAL
+            PrincepsCodec, // Network
+            Some(PrincepsHeight::INITIAL),
             validator_set,
         )
         .await?;
@@ -380,7 +380,7 @@ impl Node for OpenHlNode {
             events: channels.events,
         };
 
-        Ok(OpenHlNodeHandle {
+        Ok(PrincepsNodeHandle {
             engine,
             channels: Mutex::new(Some(channels)),
             events,
@@ -389,7 +389,7 @@ impl Node for OpenHlNode {
 
     async fn run(self) -> eyre::Result<()> {
         // Stage 6d will consume from channels here and run the app loop.
-        Err(eyre!("OpenHlNode::run is not yet implemented (Stage 6d)"))
+        Err(eyre!("PrincepsNode::run is not yet implemented (Stage 6d)"))
     }
 }
 
@@ -397,25 +397,25 @@ impl Node for OpenHlNode {
 mod tests {
     use super::*;
     use informalsystems_malachitebft_app_channel::AppMsg;
-    use crate::types::OpenHlValidator;
+    use crate::types::PrincepsValidator;
     use rand::rngs::OsRng;
     use std::time::Duration;
 
-    fn single_validator_node(home_dir: PathBuf) -> OpenHlNode {
+    fn single_validator_node(home_dir: PathBuf) -> PrincepsNode {
         let sk = PrivateKey::generate(OsRng);
         let pk = sk.public_key();
         let digest = Sha256::digest(pk.as_bytes());
         let mut addr_bytes = [0u8; 20];
         addr_bytes.copy_from_slice(&digest[12..32]);
-        let address = OpenHlAddress(addr_bytes);
-        let validator_set = OpenHlValidatorSet::new(vec![OpenHlValidator::new(address, pk, 1)]);
-        OpenHlNode::new(sk, validator_set, home_dir, "openhl-test").without_startup_ready_check()
+        let address = PrincepsAddress(addr_bytes);
+        let validator_set = PrincepsValidatorSet::new(vec![PrincepsValidator::new(address, pk, 1)]);
+        PrincepsNode::new(sk, validator_set, home_dir, "princeps-test").without_startup_ready_check()
     }
 
     #[test]
     fn private_key_file_round_trips() {
         let sk = PrivateKey::generate(OsRng);
-        let file = OpenHlPrivateKeyFile::from_private_key(&sk);
+        let file = PrincepsPrivateKeyFile::from_private_key(&sk);
         let restored = file.into_private_key();
         assert_eq!(restored.inner().to_bytes(), sk.inner().to_bytes());
     }
@@ -516,7 +516,7 @@ mod tests {
         let digest = Sha256::digest(pk.as_bytes());
         let mut expected = [0u8; 20];
         expected.copy_from_slice(&digest[12..32]);
-        assert_eq!(addr1, OpenHlAddress(expected));
+        assert_eq!(addr1, PrincepsAddress(expected));
     }
 
     /// Smoke test: spin up the actor system, get a handle back, kill cleanly.

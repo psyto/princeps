@@ -10,12 +10,12 @@
 //! **function pointer**, not an `Fn` closure. Function pointers can't capture
 //! environment, so the only way to get per-instance state into the precompile
 //! is via global storage. The trade-off: only one CLOB can be installed
-//! per process. For single-validator openhl deployments that's fine. Future
+//! per process. For single-validator princeps deployments that's fine. Future
 //! REVM versions may expand the precompile signature; until then, the global
 //! is load-bearing infrastructure.
 //!
 //! Precompile address conventions:
-//!   - openhl reserves the range `0x0000...0c1b` upwards (mnemonic: "CLB")
+//!   - princeps reserves the range `0x0000...0c1b` upwards (mnemonic: "CLB")
 //!   - addresses 1-9 are Ethereum's standard precompiles (ECDSA recover etc.)
 //!   - we stay well above those to avoid collisions
 
@@ -33,7 +33,7 @@ use std::sync::{
 };
 
 mod revert_guard;
-pub use revert_guard::OpenHlRevertGuard;
+pub use revert_guard::PrincepsRevertGuard;
 
 /// Address of the "read best bid" precompile.
 ///
@@ -570,7 +570,7 @@ pub(crate) fn withdraw(input: &[u8], _gas_limit: u64, _reservoir: u64) -> Precom
 }
 
 /// Build a `Precompiles` set that extends Reth's standard precompiles with
-/// openhl's CLOB-reading + CLOB-writing additions. The base set is parameterized
+/// princeps's CLOB-reading + CLOB-writing additions. The base set is parameterized
 /// over the hardfork's spec id so we inherit Ethereum's evolution (e.g., the
 /// BLS-12-381 precompiles activated in Prague).
 #[must_use]

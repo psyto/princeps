@@ -64,7 +64,7 @@ impl FundingClock {
     /// On success, the clock advances to `now` (NOT to
     /// `last_settled_at + interval`) — see the "no catch-up" invariant in
     /// the module docs. Production callers wanting strict interval alignment
-    /// can advance externally, but openhl's default is "settle on the first
+    /// can advance externally, but princeps's default is "settle on the first
     /// block ≥ interval boundary, then reset the deadline".
     pub fn tick(
         &mut self,

@@ -1,4 +1,4 @@
-//! `openhl-clearing` — per-account position bookkeeping under CLOB fills.
+//! `princeps-clearing` — per-account position bookkeeping under CLOB fills.
 //!
 //! Pure state machine. Given an [`Account`] and a fill at `(price, qty,
 //! side)`, [`apply_fill`] mutates the account in place and returns the
@@ -17,13 +17,13 @@
 //! avg_entry)`, signed by the side being decreased. This crate
 //! formalizes that math as a pure function so every validator that
 //! consumes the same fill sequence reaches the same per-account
-//! state — the determinism guarantee the rest of openhl already
+//! state — the determinism guarantee the rest of princeps already
 //! depends on.
 //!
 //! ### Why a separate crate
 //!
-//! `openhl-clob` produces fills; `openhl-funding` consumes positions;
-//! `openhl-liquidation` consumes account snapshots; `openhl-vault`
+//! `princeps-clob` produces fills; `princeps-funding` consumes positions;
+//! `princeps-liquidation` consumes account snapshots; `princeps-vault`
 //! holds collateral. None of them owns the "what does a fill do to my
 //! position?" rule — that gap is what this crate fills.
 //!
@@ -137,7 +137,7 @@ impl Account {
 /// All operations are `i128`-widened and `saturating_*` so a
 /// malicious overflow can't fork the chain. The final result is
 /// narrowed back to `i64`/`u64`. Same conventions as
-/// `openhl-funding` and `openhl-liquidation`.
+/// `princeps-funding` and `princeps-liquidation`.
 pub fn apply_fill(
     account: &mut Account,
     fill_price: Price,

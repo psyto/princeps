@@ -1,11 +1,11 @@
 use informalsystems_malachitebft_core_types::ProposalPart;
 use serde::{Deserialize, Serialize};
 
-use crate::context::OpenHlContext;
-use crate::types::OpenHlHeight;
+use crate::context::PrincepsContext;
+use crate::types::PrincepsHeight;
 use informalsystems_malachitebft_core_types::Round;
 
-use crate::types::OpenHlAddress;
+use crate::types::PrincepsAddress;
 
 /// Wire payload for one streamed proposal. Stage 18a inflates this from the
 /// Stage 13l unit struct so the follower can install a proposer's block
@@ -21,11 +21,11 @@ use crate::types::OpenHlAddress;
 /// `is_last()` both return `true`, and [`crate::engine_app`] always sends
 /// exactly one `Data` stream message followed by `Fin`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OpenHlProposalPart {
+pub struct PrincepsProposalPart {
     /// Consensus height the proposer is building at. The follower uses
     /// this when handing the assembled value back to Malachite via
     /// `AppMsg::ReceivedProposalPart`'s reply.
-    pub height: OpenHlHeight,
+    pub height: PrincepsHeight,
     /// Consensus round.
     pub round: Round,
     /// "Previous-or-locked" round — Tendermint's POL semantics. Carried
@@ -33,12 +33,12 @@ pub struct OpenHlProposalPart {
     pub pol_round: Round,
     /// The proposer's validator address, used by Malachite to attribute
     /// the proposed value.
-    pub proposer: OpenHlAddress,
+    pub proposer: PrincepsAddress,
     /// Bridge-encoded block bytes. Opaque to the consensus crate.
     pub block_bytes: Vec<u8>,
 }
 
-impl ProposalPart<OpenHlContext> for OpenHlProposalPart {
+impl ProposalPart<PrincepsContext> for PrincepsProposalPart {
     fn is_first(&self) -> bool {
         true
     }

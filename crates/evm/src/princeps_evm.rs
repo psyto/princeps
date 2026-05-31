@@ -1,4 +1,4 @@
-//! `OpenHlEvmFactory` + `OpenHlExecutorBuilder` — Reth's `ConfigureEvm` slot,
+//! `PrincepsEvmFactory` + `PrincepsExecutorBuilder` — Reth's `ConfigureEvm` slot,
 //! filled with our custom-precompile EVM.
 //!
 //! Stage 9a (scout commit) — modelled on Reth's `examples/custom-evm/src/main.rs`
@@ -8,9 +8,9 @@
 //!
 //! ### Stage 17k — revert-aware by default
 //!
-//! `OpenHlEvmFactory::Evm<DB, I>` is `EthEvm<DB, (I, OpenHlRevertGuard), P>`
+//! `PrincepsEvmFactory::Evm<DB, I>` is `EthEvm<DB, (I, PrincepsRevertGuard), P>`
 //! — every EVM the factory hands out runs the user's inspector AND
-//! [`crate::precompiles::OpenHlRevertGuard`], composed via REVM's
+//! [`crate::precompiles::PrincepsRevertGuard`], composed via REVM's
 //! built-in `Inspector for (L, R)` tuple impl. The guard snapshots
 //! the precompile globals (`{accounts, CLOB book, pending_fills}`)
 //! on each call-frame entry and restores on revert, so a contract
@@ -21,7 +21,7 @@
 //! by default (was `false` for `create_evm` through Stage 17j) so
 //! the guard actually runs in production Reth-executor paths.
 //! Negligible cost for the v0 dev seed; meaningful semantics for
-//! any real EVM transaction that touches an openhl precompile.
+//! any real EVM transaction that touches an princeps precompile.
 
 use alloy_evm::{
     eth::EthEvmContext,
@@ -45,25 +45,25 @@ use reth_node_api::{FullNodeTypes, NodeTypes};
 use reth_node_builder::{components::ExecutorBuilder, BuilderContext};
 use std::sync::OnceLock;
 
-use crate::precompiles::{princeps_precompiles, OpenHlRevertGuard};
+use crate::precompiles::{princeps_precompiles, PrincepsRevertGuard};
 
-/// EVM factory that registers openhl's custom precompiles on every EVM
+/// EVM factory that registers princeps's custom precompiles on every EVM
 /// instance Reth constructs (for payload assembly, block validation, RPC
 /// state queries, etc.).
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
-pub struct OpenHlEvmFactory;
+pub struct PrincepsEvmFactory;
 
-impl EvmFactory for OpenHlEvmFactory {
+impl EvmFactory for PrincepsEvmFactory {
     /// Stage 17k: every EVM the factory hands out is wrapped in
-    /// [`OpenHlEvm`], which internally composes the user-facing
-    /// inspector with [`OpenHlRevertGuard`] (via REVM's
+    /// [`PrincepsEvm`], which internally composes the user-facing
+    /// inspector with [`PrincepsRevertGuard`] (via REVM's
     /// `Inspector for (L, R)` tuple impl) but presents the
     /// user-facing inspector as its `Inspector` associated type.
     /// The trait pins `Inspector = I`, hence the wrapper rather
     /// than a direct tuple alias.
     type Evm<DB: Database, I: Inspector<EthEvmContext<DB>, EthInterpreter>> =
-        OpenHlEvm<DB, I, Self::Precompiles>;
+        PrincepsEvm<DB, I, Self::Precompiles>;
     type Tx = TxEnv;
     type Error<DBError: core::error::Error + Send + Sync + 'static> = EVMError<DBError>;
     type HaltReason = HaltReason;
@@ -78,11 +78,11 @@ impl EvmFactory for OpenHlEvmFactory {
             .with_db(db)
             .with_cfg(input.cfg_env)
             .with_block(input.block_env)
-            .build_mainnet_with_inspector((NoOpInspector::default(), OpenHlRevertGuard::new()))
+            .build_mainnet_with_inspector((NoOpInspector::default(), PrincepsRevertGuard::new()))
             .with_precompiles(PrecompilesMap::from_static(precompiles_for(spec)));
         // `inspect = true` (was `false` through 17j) so the guard
         // actually runs in production code paths.
-        OpenHlEvm {
+        PrincepsEvm {
             inner: EthEvm::new(evm, true),
         }
     }
@@ -98,16 +98,16 @@ impl EvmFactory for OpenHlEvmFactory {
             .with_db(db)
             .with_cfg(input.cfg_env)
             .with_block(input.block_env)
-            .build_mainnet_with_inspector((inspector, OpenHlRevertGuard::new()))
+            .build_mainnet_with_inspector((inspector, PrincepsRevertGuard::new()))
             .with_precompiles(PrecompilesMap::from_static(precompiles_for(spec)));
-        OpenHlEvm {
+        PrincepsEvm {
             inner: EthEvm::new(evm, true),
         }
     }
 }
 
 /// Wrapper around [`EthEvm`] that internally composes the user's
-/// inspector with [`OpenHlRevertGuard`] but presents the user's
+/// inspector with [`PrincepsRevertGuard`] but presents the user's
 /// inspector as the [`Evm::Inspector`] associated type. Needed
 /// because `EvmFactory::Evm`'s GAT bound pins `Inspector = I` —
 /// a direct `EthEvm<DB, (I, Guard), P>` would set
@@ -117,17 +117,17 @@ impl EvmFactory for OpenHlEvmFactory {
 /// [`Self::components`] / [`Self::components_mut`] peel the
 /// `.0` off the inspector tuple so the user only sees their own
 /// inspector.
-pub struct OpenHlEvm<DB: Database, I, P> {
-    inner: EthEvm<DB, (I, OpenHlRevertGuard), P>,
+pub struct PrincepsEvm<DB: Database, I, P> {
+    inner: EthEvm<DB, (I, PrincepsRevertGuard), P>,
 }
 
-impl<DB: Database, I, P> core::fmt::Debug for OpenHlEvm<DB, I, P> {
+impl<DB: Database, I, P> core::fmt::Debug for PrincepsEvm<DB, I, P> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("OpenHlEvm").finish_non_exhaustive()
+        f.debug_struct("PrincepsEvm").finish_non_exhaustive()
     }
 }
 
-impl<DB, I, P> Evm for OpenHlEvm<DB, I, P>
+impl<DB, I, P> Evm for PrincepsEvm<DB, I, P>
 where
     DB: Database,
     I: Inspector<EthEvmContext<DB>>,
@@ -212,22 +212,22 @@ fn precompiles_for(spec: SpecId) -> &'static Precompiles {
     }
 }
 
-/// Executor builder that swaps in `OpenHlEvmFactory` while keeping all other
+/// Executor builder that swaps in `PrincepsEvmFactory` while keeping all other
 /// Reth `EthereumNode` components at default.
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
-pub struct OpenHlExecutorBuilder;
+pub struct PrincepsExecutorBuilder;
 
-impl<Node> ExecutorBuilder<Node> for OpenHlExecutorBuilder
+impl<Node> ExecutorBuilder<Node> for PrincepsExecutorBuilder
 where
     Node: FullNodeTypes<Types: NodeTypes<ChainSpec = ChainSpec, Primitives = EthPrimitives>>,
 {
-    type EVM = EthEvmConfig<ChainSpec, OpenHlEvmFactory>;
+    type EVM = EthEvmConfig<ChainSpec, PrincepsEvmFactory>;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
         Ok(EthEvmConfig::new_with_evm_factory(
             ctx.chain_spec(),
-            OpenHlEvmFactory,
+            PrincepsEvmFactory,
         ))
     }
 }

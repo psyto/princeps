@@ -6,7 +6,7 @@ use thiserror::Error;
 
 /// The four-message contract between BFT consensus and EVM execution.
 ///
-/// Every interaction between `openhl-consensus` and `openhl-evm` flows through one of these methods. Anything else is a contract leak.
+/// Every interaction between `princeps-consensus` and `princeps-evm` flows through one of these methods. Anything else is a contract leak.
 #[async_trait]
 pub trait ConsensusBridge: Send + Sync {
     /// CL → EL: build a candidate block on `parent`. Returns immediately; await the block via [`Self::payload_ready`].
@@ -30,7 +30,7 @@ pub trait ConsensusBridge: Send + Sync {
 
     /// CL → EL (proposer side, Stage 18a): serialise the just-built payload
     /// into bytes that can be shipped to follower validators inside an
-    /// `OpenHlProposalPart`. The wire format is opaque to the consensus
+    /// `PrincepsProposalPart`. The wire format is opaque to the consensus
     /// crate — only the bridge knows how to read it back. Called by the
     /// proposer after `payload_ready` succeeds for the height it just
     /// built.

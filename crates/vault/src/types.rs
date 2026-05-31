@@ -2,7 +2,7 @@
 //!
 //! Pure data — every type is `Copy`-friendly so the engine can be
 //! invoked on stack-allocated values without lifetime gymnastics.
-//! Follows the openhl convention: the crate never owns mutable state
+//! Follows the princeps convention: the crate never owns mutable state
 //! in its types; mutation lives in [`crate::state`].
 //!
 //! ### What a vault is, in one paragraph
@@ -66,7 +66,7 @@ pub const SHARE_PRICE_BPS_SCALE: i64 = 10_000;
 pub struct VaultParams {
     /// Smallest `Assets` value any deposit must equal or exceed.
     /// Defends against dust deposits that round to zero shares.
-    /// Hyperliquid-style vaults set this around 100 USDC; openhl's
+    /// Hyperliquid-style vaults set this around 100 USDC; princeps's
     /// `production_default` mirrors that magnitude.
     pub min_deposit: i64,
 }

@@ -1,4 +1,4 @@
-//! `openhl-liquidation` — perpetual-position liquidation engine.
+//! `princeps-liquidation` — perpetual-position liquidation engine.
 //!
 //! Pure compute through Stage 10b's compute extensions: no I/O, no async,
 //! no networking. Liquidation decisions are deterministic functions over
@@ -61,7 +61,7 @@
 //!
 //! ### Why fixed-point integers, not floats
 //!
-//! Same answer as `openhl-funding`: consensus determinism. We use signed
+//! Same answer as `princeps-funding`: consensus determinism. We use signed
 //! integers scaled by [`MARGIN_SCALE`] (10⁴, i.e. basis points) for margin
 //! ratios, and the `i64 + saturating arithmetic` discipline from the
 //! funding crate for all intermediate products.

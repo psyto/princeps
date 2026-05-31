@@ -31,7 +31,7 @@ mod tests {
     use reth_tasks::Runtime;
     use std::sync::Arc;
 
-    use crate::OpenHlExecutorBuilder;
+    use crate::PrincepsExecutorBuilder;
 
     fn dev_chain_spec() -> Arc<ChainSpec> {
         // Minimal post-merge dev genesis. ChainID 2600 mirrors the upstream
@@ -105,7 +105,7 @@ mod tests {
         }
     }
 
-    /// Stage 9a: prove that `NodeBuilder` accepts `OpenHlExecutorBuilder` in
+    /// Stage 9a: prove that `NodeBuilder` accepts `PrincepsExecutorBuilder` in
     /// place of Reth's default executor, and that the resulting node still
     /// spawns cleanly with our custom precompile registered.
     ///
@@ -123,7 +123,7 @@ mod tests {
             let _handle = NodeBuilder::new(node_config)
                 .testing_node(runtime)
                 .with_types::<EthereumNode>()
-                .with_components(EthereumNode::components().executor(OpenHlExecutorBuilder))
+                .with_components(EthereumNode::components().executor(PrincepsExecutorBuilder))
                 .with_add_ons(EthereumAddOns::default())
                 .launch()
                 .await?;
@@ -135,7 +135,7 @@ mod tests {
         }
         .await;
         if let Err(e) = result {
-            panic!("Reth dev node bootstrap with OpenHl EVM failed: {e:?}");
+            panic!("Reth dev node bootstrap with Princeps EVM failed: {e:?}");
         }
     }
 }
