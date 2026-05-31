@@ -23,10 +23,12 @@
 //!
 //! See `docs/plans/v0-lending.md` for the full v0 build plan.
 
+pub mod health;
 pub mod irm;
 pub mod position;
 pub mod types;
 
+pub use health::{compute_health_factor, compute_health_factor_from_values, is_liquidatable};
 pub use irm::compute_borrow_rate;
 pub use position::{borrow, deposit_collateral, repay, withdraw_collateral, LendingError};
 pub use types::{AssetId, Bps, Index, IrmParams, Market, MarketId, Position};

@@ -37,7 +37,6 @@ use crate::types::{Bps, IrmParams};
 pub fn compute_borrow_rate(utilization: Bps, params: &IrmParams) -> u128 {
     let u = u128::from(utilization.0);
     let kink = u128::from(params.kink_bps.0);
-    const HUNDRED_PCT: u128 = 10_000;
 
     if u <= kink {
         // Below or at kink boundary
