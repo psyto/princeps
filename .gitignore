@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+*.swp
+.DS_Store
+.idea/
+.vscode/
+
+# Bootstrap meta-doc — not part of the repo
+SCAFFOLD.md
