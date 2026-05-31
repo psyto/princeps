@@ -13,6 +13,7 @@ princeps-types             = { workspace = true }
 princeps-clob              = { workspace = true }
 princeps-clearing          = { workspace = true }
 princeps-funding           = { workspace = true }
+princeps-lending           = { workspace = true }
 async-trait              = { workspace = true }
 eyre                     = { workspace = true }
 alloy-primitives         = { workspace = true, features = ["serde"] }

@@ -37,6 +37,9 @@ use princeps_clearing::{apply_fill, Account};
 use princeps_clob::{AccountId, Book, Fill, FillResult, Order};
 use princeps_consensus::bridge::{BridgeError, ConsensusBridge};
 use princeps_funding::Notional;
+use princeps_lending::{
+    accrue_interest, compute_health_factor, InterestAccrualReport, Market, MarketId, Position,
+};
 use princeps_types::{BlockHash, ExecutedBlock, PayloadAttrs, PayloadId, PayloadStatus};
 use reth_chainspec::{ChainSpec, EthChainSpec};
 use reth_consensus::HeaderValidator;
@@ -45,7 +48,7 @@ use reth_ethereum_consensus::EthBeaconConsensus;
 use reth_ethereum_engine_primitives::EthEngineTypes;
 use reth_primitives_traits::SealedHeader;
 use reth_storage_api::{BlockNumReader, HeaderProvider};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
@@ -79,6 +82,56 @@ pub struct LiveRethEvmBridge<P> {
     /// precompile can hold a clone of the same map. Same shared-Arc
     /// pattern as `clob` and `pending_fills`.
     accounts: Arc<Mutex<HashMap<AccountId, Account>>>,
+    /// Lending markets (Stage 20a). One `Market` per `MarketId`; v0
+    /// ships a single market (USDC collateral, ETH borrow) but the
+    /// `BTreeMap` is multi-market ready — Stage 20+ may add more.
+    ///
+    /// `BTreeMap` (not `HashMap`) so iteration is deterministic
+    /// without an explicit sort step; matters for consensus when
+    /// per-block lending tick (Stage 20c) iterates markets to accrue
+    /// interest. Same `Arc<Mutex<...>>` sharing pattern as `accounts`
+    /// so future lending precompiles (Stage 21) can hold a clone.
+    markets: Arc<Mutex<BTreeMap<MarketId, Market>>>,
+    /// Per-account lending positions, keyed by `(AccountId, MarketId)`
+    /// (Stage 20a). One entry per (account, market) pair where the
+    /// account has non-zero collateral OR debt in that market. v0
+    /// keeps inactive positions in the map for simplicity; a future
+    /// stage may add cleanup of fully-closed positions.
+    ///
+    /// `BTreeMap` for deterministic iteration; the tuple-key ordering
+    /// (AccountId-then-MarketId) gives stable per-account grouping
+    /// without requiring a secondary index.
+    positions: Arc<Mutex<BTreeMap<(AccountId, MarketId), Position>>>,
+}
+
+/// Result of [`LiveRethEvmBridge::lending_tick`] (Stage 20c).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LendingTickReport {
+    pub block: u64,
+    /// One report per market, in `MarketId` order. Empty when the bridge
+    /// has no registered markets.
+    pub interest_reports: Vec<(MarketId, InterestAccrualReport)>,
+}
+
+/// Result of [`LiveRethEvmBridge::scan_lending_health`] (Stage 20c).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LendingHealthScanReport {
+    /// Number of positions that had both a market and a price entry
+    /// available and were actually evaluated.
+    pub scanned: usize,
+    /// Number of positions skipped because their market had no price
+    /// entry in the `prices` map. Caller should treat non-zero as a
+    /// configuration bug (oracle gap or missing market entry).
+    pub skipped_no_price: usize,
+    /// Number of positions skipped because their referenced market is
+    /// not registered with the bridge. Non-zero indicates orphaned
+    /// positions (should only happen if a market was removed mid-chain,
+    /// which v0 doesn't support).
+    pub skipped_no_market: usize,
+    /// Positions whose health factor is strictly less than 1.0 (RAY),
+    /// in `(AccountId, MarketId)` lex order. Tuple value is the
+    /// RAY-scaled health factor for downstream telemetry.
+    pub flagged: Vec<(((AccountId, MarketId)), u128)>,
 }
 
 #[derive(Debug, Default)]
@@ -115,6 +168,13 @@ impl<P> LiveRethEvmBridge<P> {
         let accounts = Arc::new(Mutex::new(HashMap::new()));
         crate::precompiles::install_accounts(Arc::clone(&accounts));
 
+        // Stage 20a: lending state (markets + positions). Starts empty;
+        // markets are registered explicitly by the binary at boot
+        // (`with_markets_mut`) before any borrow/repay traffic. Precompile
+        // wiring lands in Stage 21.
+        let markets = Arc::new(Mutex::new(BTreeMap::new()));
+        let positions = Arc::new(Mutex::new(BTreeMap::new()));
+
         Self {
             provider,
             chain_spec,
@@ -124,6 +184,8 @@ impl<P> LiveRethEvmBridge<P> {
             engine_handle: None,
             state: Mutex::new(State::default()),
             accounts,
+            markets,
+            positions,
         }
     }
 
@@ -217,6 +279,126 @@ impl<P> LiveRethEvmBridge<P> {
     {
         let mut accts = self.accounts.lock().expect("accounts mutex poisoned");
         f(&mut accts)
+    }
+
+    /// Mutate the bridge-owned lending markets map under its lock
+    /// (Stage 20a). The binary uses this at boot to register the v0
+    /// single market (USDC collateral, ETH borrow); per-block lending
+    /// interest accrual (Stage 20c) will use it to iterate every market
+    /// and call `princeps_lending::accrue_interest`.
+    pub fn with_markets_mut<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut BTreeMap<MarketId, Market>) -> R,
+    {
+        let mut markets = self.markets.lock().expect("markets mutex poisoned");
+        f(&mut markets)
+    }
+
+    /// Mutate the bridge-owned lending positions map under its lock
+    /// (Stage 20a). Lending precompiles (Stage 21) and the per-block
+    /// health scan (Stage 20c) both go through this accessor.
+    pub fn with_positions_mut<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut BTreeMap<(AccountId, MarketId), Position>) -> R,
+    {
+        let mut positions = self.positions.lock().expect("positions mutex poisoned");
+        f(&mut positions)
+    }
+
+    /// Snapshot the current markets as a sorted `Vec<(MarketId, Market)>`.
+    /// `BTreeMap` already gives sorted iteration; this is convenience for
+    /// callers that want owned data (e.g., the v0 lending demo CLI).
+    #[must_use]
+    pub fn markets_snapshot(&self) -> Vec<(MarketId, Market)> {
+        let markets = self.markets.lock().expect("markets mutex poisoned");
+        markets.iter().map(|(k, v)| (*k, v.clone())).collect()
+    }
+
+    /// Snapshot the current positions as a sorted `Vec`. Iteration
+    /// order is `(AccountId, MarketId)` lexicographic — stable per-block.
+    #[must_use]
+    pub fn positions_snapshot(&self) -> Vec<((AccountId, MarketId), Position)> {
+        let positions = self.positions.lock().expect("positions mutex poisoned");
+        positions.iter().map(|(k, v)| (*k, v.clone())).collect()
+    }
+
+    /// Per-block lending interest accrual (Stage 20c).
+    ///
+    /// Iterates every market in deterministic `MarketId` order and calls
+    /// [`princeps_lending::accrue_interest`] with `current_block`. Mutates
+    /// `borrow_index`, `total_borrowed`, and `reserves` in place on each
+    /// market. Returns one [`InterestAccrualReport`] per market.
+    ///
+    /// Should be called BEFORE any per-block health scan or precompile
+    /// dispatch, so position queries see up-to-date `borrow_index` values.
+    /// Idempotent within a block — calling twice with the same
+    /// `current_block` is a no-op the second time (the underlying
+    /// `accrue_interest` checks `last_accrual_block`).
+    pub fn lending_tick(&self, current_block: u64) -> LendingTickReport {
+        let mut interest_reports = Vec::new();
+        self.with_markets_mut(|markets| {
+            for (id, market) in markets.iter_mut() {
+                let report = accrue_interest(market, current_block);
+                interest_reports.push((*id, report));
+            }
+        });
+        LendingTickReport {
+            block: current_block,
+            interest_reports,
+        }
+    }
+
+    /// Scan all lending positions for health < 1.0 (Stage 20c).
+    ///
+    /// `prices` maps each `MarketId` to `(collateral_price, debt_price)` in
+    /// matching units. The bridge's commit path supplies these from the
+    /// oracle (currently `princeps_oracle::OracleState::current_price`).
+    /// Positions in markets without a price entry are SKIPPED (not flagged) —
+    /// callers should ensure every active market has fresh prices before
+    /// calling, otherwise unflagged underwater positions go unnoticed.
+    ///
+    /// Returns flagged positions in `(AccountId, MarketId)` order along
+    /// with their computed RAY-scaled health factors. Downstream
+    /// liquidation logic (Stage 22) consumes this report.
+    ///
+    /// Cross-margin with perp positions is NOT done here — that's Stage 23.
+    /// Until then, lending health and perp health are computed independently.
+    #[must_use]
+    pub fn scan_lending_health(
+        &self,
+        prices: &BTreeMap<MarketId, (u128, u128)>,
+    ) -> LendingHealthScanReport {
+        let mut flagged = Vec::new();
+        let mut scanned: usize = 0;
+        let mut skipped_no_price: usize = 0;
+        let mut skipped_no_market: usize = 0;
+
+        let markets = self.markets.lock().expect("markets mutex poisoned");
+        let positions = self.positions.lock().expect("positions mutex poisoned");
+
+        for (key, position) in positions.iter() {
+            let (_account_id, market_id) = key;
+            let Some(market) = markets.get(market_id) else {
+                skipped_no_market += 1;
+                continue;
+            };
+            let Some(&(coll_price, debt_price)) = prices.get(market_id) else {
+                skipped_no_price += 1;
+                continue;
+            };
+            scanned += 1;
+            let hf = compute_health_factor(position, market, coll_price, debt_price);
+            if hf < princeps_lending::Index::RAY {
+                flagged.push((*key, hf));
+            }
+        }
+
+        LendingHealthScanReport {
+            scanned,
+            skipped_no_price,
+            skipped_no_market,
+            flagged,
+        }
     }
 
     /// Credit `amount` quote-currency to `account`'s collateral

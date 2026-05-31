@@ -6747,6 +6747,7 @@ dependencies = [
  "princeps-clob",
  "princeps-consensus",
  "princeps-funding",
+ "princeps-lending",
  "princeps-types",
  "reth-chainspec",
  "reth-consensus",
