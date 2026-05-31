@@ -1,8 +1,8 @@
-# princeps architecture
+# Princeps architecture
 
 ## Subsystems
 
-princeps is a single Rust binary composed of two cleanly-separated halves:
+Princeps is a single Rust binary composed of two cleanly-separated halves:
 
 - **Consensus layer (CL)** — Malachite BFT, wired through `crates/consensus`. Owns leader election, voting, view changes, finality.
 - **Execution layer (EL)** — Reth as a library, wired through `crates/evm`. Owns state, EVM execution, payload building, mempool.
