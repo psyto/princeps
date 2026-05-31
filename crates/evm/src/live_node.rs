@@ -131,7 +131,7 @@ pub struct LendingHealthScanReport {
     /// Positions whose health factor is strictly less than 1.0 (RAY),
     /// in `(AccountId, MarketId)` lex order. Tuple value is the
     /// RAY-scaled health factor for downstream telemetry.
-    pub flagged: Vec<(((AccountId, MarketId)), u128)>,
+    pub flagged: Vec<((AccountId, MarketId), u128)>,
 }
 
 #[derive(Debug, Default)]
