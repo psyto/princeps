@@ -23,6 +23,8 @@
 //!
 //! See `docs/plans/v0-lending.md` for the full v0 build plan.
 
+pub mod position;
 pub mod types;
 
+pub use position::{borrow, deposit_collateral, repay, withdraw_collateral, LendingError};
 pub use types::{AssetId, Bps, Index, IrmParams, Market, MarketId, Position};
