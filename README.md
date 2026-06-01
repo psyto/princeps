@@ -50,9 +50,9 @@ Seven foundational decisions, locked for the platform lifecycle:
 
 ## Status
 
-Princeps inherits a working Reth + Malachite kernel from [openhl](https://github.com/psyto/openhl) — fully functional as of 2026-05-31. **286 tests pass across 11 crates.**
+Princeps inherits a working Reth + Malachite kernel from [openhl](https://github.com/psyto/openhl) and extends it with the v0 lending kernel. Fully functional as of 2026-06-01. **369+ tests pass across 12 crates.**
 
-**Built (Stages 1–18a):**
+**Built — kernel inherited from openhl (Stages 1–18a):**
 - ✅ Consensus substrate (Reth + Malachite, 4-message bridge)
 - ✅ Two-validator devnet with real follower replication via `ProposalAndParts`
 - ✅ CLOB pure state machine
@@ -63,14 +63,23 @@ Princeps inherits a working Reth + Malachite kernel from [openhl](https://github
 - ✅ Vault primitive (share-based, ERC-4626-style)
 - ✅ Clearing (`apply_fill` state machine, bridge-owned account map, persistent across restarts)
 - ✅ Node coordinator + `reth-devnet` boot ceremony (persistent MDBX, validator key persistence, chain-spec loading, per-block integration tick)
-- ✅ Margin-aware withdraw with revert-safe precompile mutations (`OpenHlRevertGuard`)
+- ✅ Margin-aware withdraw with revert-safe precompile mutations (`PrincepsRevertGuard`)
 
-**Next (v0 lending build):**
-- 🚧 Lending markets crate (collateral types, IRM, position health)
-- 🚧 Cross-margin engine (multi-asset collateral)
-- 🚧 Single-asset-pair devnet (USDC / ETH)
-- 🚧 Sub-second deterministic liquidation demo (productized over the existing scanner + ADL primitives)
+**Built — v0 lending kernel (Stages 19–22b, shipped 2026-06-01):**
+- ✅ `princeps-lending` crate — pure compute: market state, position state, kinked IRM, health factor compute, per-block interest accrual (61 tests across 5 modules)
+- ✅ Bridge integration — `LiveRethEvmBridge` owns `BTreeMap<MarketId, Market>` + `BTreeMap<(AccountId, MarketId), Position>` with `with_*_mut` accessors
+- ✅ Bridge mutation methods — `lending_deposit_collateral` / `lending_borrow` / `lending_repay` / `lending_withdraw_collateral` / `lending_liquidate`, with simulate-then-commit health gating
+- ✅ Per-block lending tick — `lending_tick` accrues interest across all registered markets; `scan_lending_health` flags HF < 1.0 positions
+- ✅ Six EVM precompiles at `0x0c1f`–`0x0c24` — full lending lifecycle callable from any Solidity contract (see [EVM precompiles](#evm-precompiles) below)
+
+**Next (remaining v0 work):**
+- 🚧 Unified scan report (combining perp + lending into one liquidation surface; Stage 22a)
+- 🚧 Bad-debt absorption — when HF < 0, route to `InsuranceFund` via `PrincepsNode` (Stage 22c, cross-layer)
+- 🚧 Cross-margin engine — lending and perp positions sharing one portfolio risk model (Stage 23, the prime broker thesis)
+- 🚧 Single-asset-pair USDC/ETH devnet + CLI demo + sample liquidator bot (Stage 24)
+- 🚧 Lending revert-guard — extend `snapshot_bridge_state` to cover markets + positions (lending mutations currently leak on EVM revert, same caveat as `princeps_deposit` / `princeps_withdraw`)
 - 🚧 Multi-validator network expansion (3+ validators) building on Stage 18a follower replication
+- 🚧 Public testnet deploy
 
 ## Architecture
 
@@ -85,7 +94,7 @@ bin/princeps
 │   ├── oracle        # median-of-medians + signed observations
 │   ├── vault         # share-based collateral pooling
 │   ├── clearing      # settlement / clearing primitives
-│   ├── lending       # 🚧 v0 lending markets
+│   ├── lending       # market state, IRM, health factor, interest accrual (Stages 19-22b)
 │   ├── evm           # Reth EVM bridge + custom precompiles
 │   ├── consensus     # Malachite integration
 │   └── node          # PrincepsNode coordinator (tick driver)
@@ -118,6 +127,25 @@ cargo run --release -- reth-devnet 1 \
 ```
 
 Data and validator key default to `$HOME/.princeps/data` and `$HOME/.princeps/validator_key.json` (perms 0o600).
+
+## EVM precompiles
+
+Princeps reserves the `0x0000...0c1*` address range for custom precompiles. Any Solidity contract can call them via standard `call` / `staticcall`.
+
+| Address | Precompile | Stage |
+|---|---|---|
+| `0x...0c1b` | `clob_read_best_bid` | 9b |
+| `0x...0c1c` | `clob_place_order` | 9c |
+| `0x...0c1d` | `princeps_deposit` (perp collateral in) | 17c |
+| `0x...0c1e` | `princeps_withdraw` (perp collateral out, margin-aware) | 17e+ |
+| `0x...0c1f` | `princeps_lending_deposit_collateral` | 21a |
+| `0x...0c20` | `princeps_lending_borrow` | 21b |
+| `0x...0c21` | `princeps_lending_repay` | 21c |
+| `0x...0c22` | `princeps_lending_withdraw_collateral` | 21d |
+| `0x...0c23` | `princeps_lending_health` (staticcall-safe) | 21e |
+| `0x...0c24` | `princeps_lending_liquidate` | 22b |
+
+ABI for lending precompiles: `(uint64 account, uint32 market_id, uint128 amount [, uint128 collateral_price, uint128 debt_price])` returning `uint256` (success indicator or computed value in low 16 bytes). The borrow/withdraw/health/liquidate precompiles require prices passed in calldata; v1 will switch to an installed oracle global. See `crates/evm/src/precompiles/mod.rs` for exact shapes per precompile.
 
 ## Related projects
 

@@ -1,8 +1,39 @@
 # Princeps v0 — Lending build plan
 
-**Status**: Draft 2026-06-01
+**Status**: In progress, ~8 weeks ahead of plan
 **Target**: Q3 2026 public testnet of the lending primitive + cross-margin model
 **Scope**: Single asset pair (USDC collateral, ETH borrow) with deterministic sub-second liquidations and portfolio margin
+
+## Progress as of 2026-06-01
+
+| Stage | Status | Tests | Notes |
+|---|---|---|---|
+| 19a-e (`princeps-lending` crate, pure compute) | ✅ Complete | 61 | 5 modules: types, position helpers, IRM, health, interest accrual |
+| 20a-d (bridge integration) | ✅ Complete | 13 | Markets + positions on bridge, lending tick, scan, 4 mutation methods |
+| 21a-e (5 EVM precompiles) | ✅ Complete | 4 | deposit / borrow / repay / withdraw / health at `0x0c1f`–`0x0c23` |
+| 22b (liquidation precompile) | ✅ Complete | 5 | `lending_liquidate` bridge method + precompile at `0x0c24` |
+| 22a (unified perp+lending scan report) | ⏳ Pending | — | Combines `ScanReport` + `LendingHealthScanReport` |
+| 22c (bad-debt absorption) | ⏳ Pending | — | Cross-layer — needs `PrincepsNode::InsuranceFund` integration |
+| 23 (cross-margin) | ⏳ Pending | — | The prime broker thesis: one portfolio health across lending + perps |
+| 24 (demo + observability) | ⏳ Pending | — | USDC/ETH devnet + CLI + sample liquidator bot |
+| Public testnet deploy | ⏳ Pending | — | Validators, monitoring, faucet |
+
+**Total v0 lending tests passing**: 83 (61 in `princeps-lending` + 22 in `princeps-evm` covering bridge methods + precompile e2e).
+
+**v0 lending precompile suite (callable from any Solidity contract):**
+
+| Address | Precompile |
+|---|---|
+| `0x...0c1f` | `princeps_lending_deposit_collateral` |
+| `0x...0c20` | `princeps_lending_borrow` |
+| `0x...0c21` | `princeps_lending_repay` |
+| `0x...0c22` | `princeps_lending_withdraw_collateral` |
+| `0x...0c23` | `princeps_lending_health` (staticcall-safe) |
+| `0x...0c24` | `princeps_lending_liquidate` |
+
+The original plan structure (below) is preserved as the source-of-truth for what each stage covers and the architectural decisions behind them. Update this Progress section as stages ship.
+
+---
 
 ## What v0 ships
 
