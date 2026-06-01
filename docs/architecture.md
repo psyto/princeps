@@ -29,9 +29,10 @@ Lending uses the same shared-Arc pattern: the bridge owns `Arc<Mutex<BTreeMap<Ma
 
 Known v0 limitations:
 
-- Precompile mutations land regardless of whether the calling EVM transaction reverts (same caveat as `clob_place_order` / `princeps_deposit`); lending state is not yet covered by `snapshot_bridge_state` / `restore_bridge_state` revert-guard.
 - `withdraw`'s balance check is against raw collateral rather than free-after-margin (the lending-side withdraw IS health-checked; the perp-side `princeps_withdraw` is the one that uses the avg-entry rule).
 - Prices for the price-sensitive precompiles (`borrow` / `withdraw_collateral` / `health` / `liquidate`) are passed in calldata by the EVM caller. v1 will install an oracle global so precompiles read prices directly.
+
+Resolved 2026-06-01: lending state IS covered by the `snapshot_bridge_state` / `restore_bridge_state` revert-guard alongside accounts / book / fills. `PrincepsRevertGuard` rolls back lending precompile mutations on EVM revert exactly the way it rolls back deposit / withdraw / place_order.
 
 ## The CL/EL contract
 

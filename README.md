@@ -77,7 +77,6 @@ Princeps inherits a working Reth + Malachite kernel from [openhl](https://github
 - 🚧 Bad-debt absorption — when HF < 0, route to `InsuranceFund` via `PrincepsNode` (Stage 22c, cross-layer)
 - 🚧 Cross-margin engine — lending and perp positions sharing one portfolio risk model (Stage 23, the prime broker thesis)
 - 🚧 Single-asset-pair USDC/ETH devnet + CLI demo + sample liquidator bot (Stage 24)
-- 🚧 Lending revert-guard — extend `snapshot_bridge_state` to cover markets + positions (lending mutations currently leak on EVM revert, same caveat as `princeps_deposit` / `princeps_withdraw`)
 - 🚧 Multi-validator network expansion (3+ validators) building on Stage 18a follower replication
 - 🚧 Public testnet deploy
 

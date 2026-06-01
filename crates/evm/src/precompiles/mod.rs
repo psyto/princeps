@@ -334,6 +334,13 @@ pub(crate) struct BridgeStateSnapshot {
     accounts: Option<HashMap<AccountId, Account>>,
     book: Option<Book>,
     fills: Option<Vec<Fill>>,
+    /// Lending markets at snapshot time (lending revert-guard extension).
+    /// All six lending precompiles (0x0c1f–0x0c24) mutate this state, so
+    /// it must be journaled alongside accounts/book/fills to keep the
+    /// EVM's view consistent on revert.
+    markets: Option<BTreeMap<MarketId, Market>>,
+    /// Lending positions at snapshot time (lending revert-guard extension).
+    positions: Option<BTreeMap<(AccountId, MarketId), Position>>,
 }
 
 /// Clone the contents of every currently-installed mutating global.
@@ -362,10 +369,26 @@ pub(crate) fn snapshot_bridge_state() -> BridgeStateSnapshot {
             .as_ref()
             .map(|f| f.lock().expect("fill_sink mutex poisoned").clone())
     };
+    let markets = {
+        let state = MARKETS_STATE.read().expect("MARKETS_STATE rwlock poisoned");
+        state
+            .as_ref()
+            .map(|m| m.lock().expect("markets mutex poisoned").clone())
+    };
+    let positions = {
+        let state = POSITIONS_STATE
+            .read()
+            .expect("POSITIONS_STATE rwlock poisoned");
+        state
+            .as_ref()
+            .map(|p| p.lock().expect("positions mutex poisoned").clone())
+    };
     BridgeStateSnapshot {
         accounts,
         book,
         fills,
+        markets,
+        positions,
     }
 }
 
@@ -396,6 +419,20 @@ pub(crate) fn restore_bridge_state(snap: BridgeStateSnapshot) {
         let state = FILL_SINK.read().expect("FILL_SINK rwlock poisoned");
         if let Some(arc) = state.as_ref() {
             *arc.lock().expect("fill_sink mutex poisoned") = snap_fills;
+        }
+    }
+    if let Some(snap_markets) = snap.markets {
+        let state = MARKETS_STATE.read().expect("MARKETS_STATE rwlock poisoned");
+        if let Some(arc) = state.as_ref() {
+            *arc.lock().expect("markets mutex poisoned") = snap_markets;
+        }
+    }
+    if let Some(snap_positions) = snap.positions {
+        let state = POSITIONS_STATE
+            .read()
+            .expect("POSITIONS_STATE rwlock poisoned");
+        if let Some(arc) = state.as_ref() {
+            *arc.lock().expect("positions mutex poisoned") = snap_positions;
         }
     }
 }
@@ -2002,6 +2039,143 @@ mod tests {
         let position = positions_guard.get(&(AccountId(1), MarketId(0))).unwrap();
         assert_eq!(position.scaled_debt, 0);
         drop(positions_guard);
+
+        uninstall_lending_markets();
+        uninstall_lending_positions();
+    }
+
+    // ===== Lending revert-guard tests =====
+    //
+    // Verifies that snapshot_bridge_state + restore_bridge_state cover
+    // lending markets + positions, not just the accounts/book/fills that
+    // Stage 17i shipped originally. Closes the known v0 caveat that
+    // lending-precompile mutations leaked across EVM reverts.
+
+    #[test]
+    fn snapshot_with_no_lending_installed_returns_none_fields() {
+        let _g = TEST_SERIALIZER
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        uninstall_lending_markets();
+        uninstall_lending_positions();
+
+        let snap = snapshot_bridge_state();
+        assert!(snap.markets.is_none());
+        assert!(snap.positions.is_none());
+
+        // Restore with all-None fields is a no-op; must not panic.
+        restore_bridge_state(snap);
+    }
+
+    #[test]
+    fn snapshot_then_restore_round_trips_lending_state() {
+        let _g = TEST_SERIALIZER
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        uninstall_lending_markets();
+        uninstall_lending_positions();
+
+        let (markets, positions) = make_test_lending_market();
+        install_lending_markets(Arc::clone(&markets));
+        install_lending_positions(Arc::clone(&positions));
+
+        // Pre-mutation state: market with 1M supplied, no positions, no debt.
+        assert_eq!(positions.lock().unwrap().len(), 0);
+        assert_eq!(
+            markets.lock().unwrap().get(&MarketId(0)).unwrap().total_borrowed,
+            0
+        );
+
+        // Take savepoint.
+        let snap = snapshot_bridge_state();
+
+        // Mutate via the precompile path (deposit + borrow).
+        lending_deposit(&encode_3_chunk_input(1, 0, 1_000), 100_000, 0).unwrap();
+        lending_borrow(
+            &encode_5_chunk_input(1, 0, 500, 1, 1),
+            100_000,
+            0,
+        )
+        .unwrap();
+
+        // Verify the mutations landed.
+        assert_eq!(positions.lock().unwrap().len(), 1);
+        assert_eq!(
+            markets.lock().unwrap().get(&MarketId(0)).unwrap().total_borrowed,
+            500
+        );
+
+        // Restore — simulates EVM-frame revert.
+        restore_bridge_state(snap);
+
+        // State must be exactly back to pre-mutation.
+        assert_eq!(
+            positions.lock().unwrap().len(),
+            0,
+            "positions should be restored to empty"
+        );
+        assert_eq!(
+            markets.lock().unwrap().get(&MarketId(0)).unwrap().total_borrowed,
+            0,
+            "market.total_borrowed should be restored to 0"
+        );
+
+        uninstall_lending_markets();
+        uninstall_lending_positions();
+    }
+
+    #[test]
+    fn nested_savepoint_pattern_keeps_outer_state_safe() {
+        // Mirrors the real REVM pattern: outer frame does work that should
+        // persist; inner frame does work that reverts. After inner-restore,
+        // only the inner mutation is undone.
+        let _g = TEST_SERIALIZER
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        uninstall_lending_markets();
+        uninstall_lending_positions();
+
+        let (markets, positions) = make_test_lending_market();
+        install_lending_markets(Arc::clone(&markets));
+        install_lending_positions(Arc::clone(&positions));
+
+        // Outer-frame work: deposit collateral. This should survive the
+        // inner-frame revert.
+        lending_deposit(&encode_3_chunk_input(1, 0, 1_000), 100_000, 0).unwrap();
+
+        // Inner frame opens: savepoint, then borrow (the inner-frame work
+        // that will be reverted).
+        let inner_savepoint = snapshot_bridge_state();
+        lending_borrow(
+            &encode_5_chunk_input(1, 0, 500, 1, 1),
+            100_000,
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            markets.lock().unwrap().get(&MarketId(0)).unwrap().total_borrowed,
+            500
+        );
+
+        // Inner frame REVERTs — restore.
+        restore_bridge_state(inner_savepoint);
+
+        // Borrow is undone; outer-frame deposit must remain.
+        assert_eq!(
+            markets.lock().unwrap().get(&MarketId(0)).unwrap().total_borrowed,
+            0,
+            "inner borrow should be undone"
+        );
+        let position = positions
+            .lock()
+            .unwrap()
+            .get(&(AccountId(1), MarketId(0)))
+            .cloned();
+        assert_eq!(
+            position.map(|p| (p.collateral_amount, p.scaled_debt)),
+            Some((1_000, 0)),
+            "outer deposit should persist; debt should be cleared"
+        );
 
         uninstall_lending_markets();
         uninstall_lending_positions();
