@@ -162,7 +162,7 @@ impl From<LendingError> for LendingBridgeError {
 /// One report per scan; flagged accounts are listed with their negative
 /// free-equity for downstream liquidation policy (close lending positions
 /// first, then perp; remaining shortfall → bad-debt path Stage 22c).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UnifiedScanReport {
     /// Total number of distinct accounts scanned (union of perp + lending).
     pub scanned: usize,

@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "bin/princeps",
     "bin/liquidator-bot",
+    "bin/lending-rpc-server",
     "crates/types",
     "crates/codec",
     "crates/clob",

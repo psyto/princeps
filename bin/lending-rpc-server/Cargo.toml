@@ -1,0 +1,32 @@
+[package]
+name         = "princeps-lending-rpc-server"
+version      = { workspace = true }
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+repository   = { workspace = true }
+authors      = { workspace = true }
+
+[[bin]]
+name = "princeps-lending-rpc-server"
+path = "src/main.rs"
+
+[dependencies]
+princeps-clearing = { path = "../../crates/clearing" }
+princeps-clob     = { path = "../../crates/clob" }
+princeps-evm      = { path = "../../crates/evm" }
+princeps-funding  = { path = "../../crates/funding" }
+princeps-lending  = { path = "../../crates/lending" }
+princeps-portfolio = { path = "../../crates/portfolio" }
+
+alloy-genesis  = { workspace = true }
+axum           = "0.8"
+clap           = { version = "4.6", features = ["derive"] }
+eyre           = { workspace = true }
+reth-chainspec = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+tokio          = { workspace = true }
+
+[lints]
+workspace = true

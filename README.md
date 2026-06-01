@@ -124,6 +124,14 @@ cargo run --release -- lending-demo --eth-crash-price 85
 cargo run --release --bin princeps-liquidator-bot
 cargo run --release --bin princeps-liquidator-bot -- --eth-price 3
 
+# HTTP RPC server (Stage 24d) — read-only JSON endpoints over an in-process
+# bridge with the same 5 seeded accounts. Then in another terminal:
+#   curl http://localhost:8080/lending/markets
+#   curl http://localhost:8080/lending/positions
+#   curl 'http://localhost:8080/lending/scan?perp_mark=0&perp_im_bps=0&coll_price=1&debt_price=2'
+#   curl 'http://localhost:8080/lending/health?account=1&perp_mark=0&perp_im_bps=0&coll_price=1&debt_price=2'
+cargo run --release --bin princeps-lending-rpc-server
+
 # Single-validator devnet (in-memory bridge)
 cargo run --release -- devnet 1
 
