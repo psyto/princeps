@@ -6748,6 +6748,7 @@ dependencies = [
  "princeps-consensus",
  "princeps-funding",
  "princeps-lending",
+ "princeps-portfolio",
  "princeps-types",
  "reth-chainspec",
  "reth-consensus",

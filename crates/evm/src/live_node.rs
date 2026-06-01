@@ -33,13 +33,19 @@ use alloy_consensus::Header;
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_engine::ForkchoiceState;
 use async_trait::async_trait;
-use princeps_clearing::{apply_fill, Account};
+use princeps_clearing::{
+    apply_fill, initial_margin_requirement_at, unrealized_pnl, Account,
+};
 use princeps_clob::{AccountId, Book, Fill, FillResult, Order};
 use princeps_consensus::bridge::{BridgeError, ConsensusBridge};
-use princeps_funding::Notional;
+use princeps_funding::{MarkPrice, Notional};
 use princeps_lending::{
     accrue_interest, compute_health_factor, deposit_collateral, repay, withdraw_collateral,
     Index as LendingIndex, InterestAccrualReport, LendingError, Market, MarketId, Position,
+};
+use princeps_portfolio::{
+    compute_free_equity as portfolio_compute_free_equity, is_healthy as portfolio_is_healthy,
+    PortfolioInputs,
 };
 use princeps_types::{BlockHash, ExecutedBlock, PayloadAttrs, PayloadId, PayloadStatus};
 use reth_chainspec::{ChainSpec, EthChainSpec};
@@ -530,6 +536,125 @@ impl<P> LiveRethEvmBridge<P> {
         // total_borrowed decreases by the nominal amount that was actually repaid.
         market.total_borrowed = market.total_borrowed.saturating_sub(actual_repaid);
         Ok(actual_repaid)
+    }
+
+    /// Compute the unified cross-margin [`PortfolioInputs`] for `account`
+    /// (Stage 23b — the prime broker thesis).
+    ///
+    /// Walks the bridge's perp `accounts` map and the lending `positions`
+    /// map, normalizes values into a single quote unit, and returns the
+    /// assembled inputs ready for `princeps_portfolio::compute_free_equity`
+    /// or `is_healthy`.
+    ///
+    /// For perp: pulls `Account` for `account` (if any), computes
+    /// unrealized PnL at `perp_mark` and initial-margin requirement at
+    /// `perp_im_bps`.
+    /// For lending: iterates every position where the first key element
+    /// is `account`, looks up the corresponding market + per-market price
+    /// from `lending_prices`, and aggregates:
+    ///   - `adjusted_collateral` = collateral_amount × coll_price × LT_bps / 10_000
+    ///   - `debt_value`          = nominal_debt × debt_price
+    ///
+    /// Positions whose market has no entry in `lending_prices` are SKIPPED
+    /// (caller should supply prices for every active market). Same caveat
+    /// as `scan_lending_health` (Stage 20c).
+    ///
+    /// v0 assumption: all values are denominated in the same quote unit
+    /// (USDC). Multi-currency normalization is a v1 concern.
+    #[must_use]
+    pub fn compute_account_portfolio_inputs(
+        &self,
+        account: AccountId,
+        perp_mark: MarkPrice,
+        perp_im_bps: u32,
+        lending_prices: &BTreeMap<MarketId, (u128, u128)>,
+    ) -> PortfolioInputs {
+        // 1. Perp components
+        let (perp_collateral, perp_upnl, perp_im_req) = {
+            let accts = self.accounts.lock().expect("accounts mutex poisoned");
+            match accts.get(&account).copied() {
+                Some(acct) => (
+                    i128::from(acct.collateral.0),
+                    i128::from(unrealized_pnl(&acct, perp_mark)),
+                    i128::from(initial_margin_requirement_at(&acct, perp_mark, perp_im_bps)),
+                ),
+                None => (0i128, 0i128, 0i128),
+            }
+        };
+
+        // 2. Lending components — sum over this account's positions
+        let mut lending_adj_coll: i128 = 0;
+        let mut lending_debt: i128 = 0;
+        {
+            let markets = self.markets.lock().expect("markets mutex poisoned");
+            let positions = self.positions.lock().expect("positions mutex poisoned");
+            for ((acc, market_id), position) in positions.iter() {
+                if *acc != account {
+                    continue;
+                }
+                let Some(market) = markets.get(market_id) else {
+                    continue;
+                };
+                let Some(&(coll_price, debt_price)) = lending_prices.get(market_id) else {
+                    continue;
+                };
+
+                // adjusted_collateral = collateral × coll_price × LT_bps / 10_000
+                let collateral_value =
+                    position.collateral_amount.saturating_mul(coll_price);
+                let lt_bps = u128::from(market.liquidation_threshold.0);
+                let adjusted = collateral_value.saturating_mul(lt_bps) / 10_000;
+                lending_adj_coll = lending_adj_coll
+                    .saturating_add(i128::try_from(adjusted).unwrap_or(i128::MAX));
+
+                // debt_value = nominal_debt × debt_price
+                let nominal_debt = position.nominal_debt(market.borrow_index);
+                let debt_value = nominal_debt.saturating_mul(debt_price);
+                lending_debt = lending_debt
+                    .saturating_add(i128::try_from(debt_value).unwrap_or(i128::MAX));
+            }
+        }
+
+        PortfolioInputs {
+            perp_collateral,
+            perp_unrealized_pnl: perp_upnl,
+            perp_im_req,
+            lending_adjusted_collateral_value: lending_adj_coll,
+            lending_debt_value: lending_debt,
+        }
+    }
+
+    /// Is `account` healthy under unified cross-margin (Stage 23b)?
+    ///
+    /// Convenience wrapper around [`compute_account_portfolio_inputs`]
+    /// + `princeps_portfolio::is_healthy`. Returns `true` when the
+    /// account's combined perp + lending free-equity is non-negative.
+    #[must_use]
+    pub fn account_is_healthy_portfolio(
+        &self,
+        account: AccountId,
+        perp_mark: MarkPrice,
+        perp_im_bps: u32,
+        lending_prices: &BTreeMap<MarketId, (u128, u128)>,
+    ) -> bool {
+        let inputs =
+            self.compute_account_portfolio_inputs(account, perp_mark, perp_im_bps, lending_prices);
+        portfolio_is_healthy(&inputs)
+    }
+
+    /// Compute `account`'s free equity (Stage 23b convenience).
+    /// Returns signed `i128`: `>= 0` healthy, `< 0` liquidatable.
+    #[must_use]
+    pub fn account_free_equity(
+        &self,
+        account: AccountId,
+        perp_mark: MarkPrice,
+        perp_im_bps: u32,
+        lending_prices: &BTreeMap<MarketId, (u128, u128)>,
+    ) -> i128 {
+        let inputs =
+            self.compute_account_portfolio_inputs(account, perp_mark, perp_im_bps, lending_prices);
+        portfolio_compute_free_equity(&inputs)
     }
 
     /// Liquidate `target`'s lending position in `market_id` (Stage 22b).
@@ -2826,6 +2951,168 @@ mod tests {
         bridge.lending_tick(1_000);
         let after = bridge.markets_snapshot()[0].1.borrow_index;
         assert!(after.0 > before.0, "borrow_index should grow after tick");
+    }
+
+    // ===== Stage 23b: unified portfolio (cross-margin) bridge tests =====
+
+    fn one_market_prices(coll: u128, debt: u128) -> BTreeMap<MarketId, (u128, u128)> {
+        let mut m = BTreeMap::new();
+        m.insert(MarketId(0), (coll, debt));
+        m
+    }
+
+    #[test]
+    fn portfolio_inputs_for_empty_account_are_all_zero() {
+        let bridge = LiveRethEvmBridge::new((), dev_chain_spec());
+        let inputs = bridge.compute_account_portfolio_inputs(
+            AccountId(99),
+            MarkPrice(100),
+            1_000,
+            &BTreeMap::new(),
+        );
+        assert_eq!(inputs.perp_collateral, 0);
+        assert_eq!(inputs.perp_unrealized_pnl, 0);
+        assert_eq!(inputs.perp_im_req, 0);
+        assert_eq!(inputs.lending_adjusted_collateral_value, 0);
+        assert_eq!(inputs.lending_debt_value, 0);
+        assert!(bridge.account_is_healthy_portfolio(
+            AccountId(99),
+            MarkPrice(100),
+            1_000,
+            &BTreeMap::new(),
+        ));
+    }
+
+    #[test]
+    fn portfolio_inputs_aggregate_lending_only_account() {
+        let bridge = bridge_with_market(MarketId(0), 1_000_000);
+        let acct = AccountId(1);
+        // Deposit 1000 USDC, borrow 500 ETH at price 1.
+        bridge.lending_deposit_collateral(acct, MarketId(0), 1_000).unwrap();
+        bridge.lending_borrow(acct, MarketId(0), 500, 1, 1).unwrap();
+
+        let prices = one_market_prices(1, 1);
+        let inputs = bridge.compute_account_portfolio_inputs(
+            acct,
+            MarkPrice(0),
+            0,
+            &prices,
+        );
+        // adjusted_collateral = 1000 × 1 × 9500/10_000 = 950
+        // debt_value = 500 × 1 = 500
+        assert_eq!(inputs.lending_adjusted_collateral_value, 950);
+        assert_eq!(inputs.lending_debt_value, 500);
+        assert_eq!(inputs.perp_collateral, 0);
+        assert!(bridge.account_is_healthy_portfolio(acct, MarkPrice(0), 0, &prices));
+        // free_equity = 950 - 500 = 450
+        assert_eq!(bridge.account_free_equity(acct, MarkPrice(0), 0, &prices), 450);
+    }
+
+    #[test]
+    fn portfolio_cross_margin_lending_collateral_saves_perp_margin_call() {
+        // Scenario: account has a perp position close to margin call AND lending collateral.
+        // Siloed: perp is liquidatable. Unified: still healthy because lending collateral counts.
+        let bridge = bridge_with_market(MarketId(0), 1_000_000);
+        let acct = AccountId(7);
+
+        // Step 1: seed perp account directly via the bridge's account map.
+        bridge.with_accounts_mut(|map| {
+            let mut a = Account::flat(acct);
+            a.position_size = princeps_funding::PositionSize(10); // long 10 contracts
+            a.avg_entry = MarkPrice(100);
+            a.collateral = Notional(50); // very thin collateral
+            map.insert(acct, a);
+        });
+
+        // At mark 100 (no PnL), IM_req with 10% bps = 10 × 100 × 10% = 100.
+        // perp_equity = 50, perp_free = -50 (liquidatable siloed).
+        let mark = MarkPrice(100);
+        let im_bps = 1_000;
+        let no_lending_prices: BTreeMap<MarketId, (u128, u128)> = BTreeMap::new();
+        let siloed_free =
+            bridge.account_free_equity(acct, mark, im_bps, &no_lending_prices);
+        assert_eq!(siloed_free, -50, "perp siloed free should be -50");
+        assert!(
+            !bridge.account_is_healthy_portfolio(acct, mark, im_bps, &no_lending_prices),
+            "perp siloed is liquidatable"
+        );
+
+        // Step 2: add lending collateral on the same account.
+        bridge
+            .lending_deposit_collateral(acct, MarketId(0), 1_000)
+            .unwrap();
+        // adjusted_collateral = 1000 × 1 × 0.95 = 950
+        // lending_free = 950 - 0 = 950
+        // Total free = -50 (perp) + 950 (lending) = 900 → healthy
+        let prices = one_market_prices(1, 1);
+        let unified_free = bridge.account_free_equity(acct, mark, im_bps, &prices);
+        assert_eq!(
+            unified_free, 900,
+            "unified free should be 900 = -50 (perp) + 950 (lending)"
+        );
+        assert!(
+            bridge.account_is_healthy_portfolio(acct, mark, im_bps, &prices),
+            "unified portfolio is healthy"
+        );
+    }
+
+    #[test]
+    fn portfolio_cross_margin_perp_profit_offsets_lending_underwater() {
+        // Scenario: lending position is underwater (HF < 1 in siloed view),
+        // but the account also has a profitable perp position that covers
+        // the deficit. Unified view says healthy.
+        let bridge = bridge_with_market(MarketId(0), 1_000_000);
+        let acct = AccountId(5);
+
+        // Seed a long perp at entry 100; later mark to 150 → +500 PnL on 10 contracts.
+        bridge.with_accounts_mut(|map| {
+            let mut a = Account::flat(acct);
+            a.position_size = princeps_funding::PositionSize(10);
+            a.avg_entry = MarkPrice(100);
+            a.collateral = Notional(1_000); // healthy perp side
+            map.insert(acct, a);
+        });
+
+        // Lending: borrow against thin collateral so that at debt_price=2 it's underwater.
+        bridge.lending_deposit_collateral(acct, MarketId(0), 100).unwrap();
+        bridge.lending_borrow(acct, MarketId(0), 90, 1, 1).unwrap();
+
+        // At lending prices (1, 2): adjusted_collateral = 100 × 1 × 0.95 = 95
+        //                           debt_value = 90 × 2 = 180
+        //                           lending_free = 95 - 180 = -85 (siloed lending underwater)
+        // At perp mark 150 (entry 100): uPnL = (150-100)*10 = 500
+        //                               equity = 1000 + 500 = 1500
+        //                               IM_req = 10 × 150 × 0.1 = 150
+        //                               perp_free = 1500 - 150 = 1350
+        // Total unified free = 1350 + (-85) = 1265 → healthy
+        let prices = one_market_prices(1, 2);
+        let unified_free = bridge.account_free_equity(acct, MarkPrice(150), 1_000, &prices);
+        assert_eq!(
+            unified_free, 1265,
+            "perp profit covers lending underwater"
+        );
+        assert!(bridge.account_is_healthy_portfolio(acct, MarkPrice(150), 1_000, &prices));
+    }
+
+    #[test]
+    fn portfolio_inputs_skip_positions_with_missing_prices() {
+        // If caller forgets a market price, positions in that market are skipped
+        // (rather than treated as zero-value, which would be misleading).
+        let bridge = bridge_with_market(MarketId(0), 1_000_000);
+        let acct = AccountId(1);
+        bridge.lending_deposit_collateral(acct, MarketId(0), 1_000).unwrap();
+        bridge.lending_borrow(acct, MarketId(0), 500, 1, 1).unwrap();
+
+        // Caller passes empty prices map — position in MarketId(0) is skipped.
+        let empty_prices: BTreeMap<MarketId, (u128, u128)> = BTreeMap::new();
+        let inputs = bridge.compute_account_portfolio_inputs(
+            acct,
+            MarkPrice(0),
+            0,
+            &empty_prices,
+        );
+        assert_eq!(inputs.lending_adjusted_collateral_value, 0);
+        assert_eq!(inputs.lending_debt_value, 0);
     }
 
     // ===== Stage 22b: lending_liquidate bridge tests =====
