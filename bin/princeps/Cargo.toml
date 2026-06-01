@@ -17,6 +17,7 @@ princeps-clob        = { path = "../../crates/clob" }
 princeps-consensus   = { path = "../../crates/consensus" }
 princeps-evm         = { path = "../../crates/evm" }
 princeps-funding     = { path = "../../crates/funding" }
+princeps-lending     = { path = "../../crates/lending" }
 princeps-liquidation = { path = "../../crates/liquidation" }
 princeps-node        = { path = "../../crates/node" }
 princeps-oracle      = { path = "../../crates/oracle" }

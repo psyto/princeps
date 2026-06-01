@@ -112,6 +112,13 @@ bin/princeps
 # Build
 cargo build --release
 
+# >>> START HERE: cross-margin demo (Stage 24b) <<<
+# Runs Alice's canonical prime-broker scenario in ~1 second:
+# deposit USDC → borrow ETH → open perp → market crash → show siloed vs unified margin
+cargo run --release -- lending-demo
+# Try different crash prices:
+cargo run --release -- lending-demo --eth-crash-price 85
+
 # Single-validator devnet (in-memory bridge)
 cargo run --release -- devnet 1
 
@@ -127,6 +134,16 @@ cargo run --release -- reth-devnet 1 \
 ```
 
 Data and validator key default to `$HOME/.princeps/data` and `$HOME/.princeps/validator_key.json` (perms 0o600).
+
+The `lending-demo` subcommand is the fastest way to see what Princeps does. It produces:
+
+```
+            View                       Free equity       Verdict
+            Siloed (perp only)                -140       LIQUIDATABLE
+            Unified (perp + lending)           360       HEALTHY
+```
+
+Same account, two ways of computing margin. Siloed → forced liquidation. Unified portfolio (the prime broker thesis) → position stays open because the lending collateral backs the perp position.
 
 ## EVM precompiles
 
