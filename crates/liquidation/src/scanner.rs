@@ -141,6 +141,14 @@ impl LiquidationScanner {
         &self.fund
     }
 
+    /// Mutable access to the insurance fund. The integration coordinator
+    /// uses this to absorb out-of-band shortfalls — e.g., lending bad
+    /// debt routed in from the bridge layer (`PrincepsNode::absorb_lending_bad_debt`).
+    /// Per-block perp scans still mutate the fund through `scan` directly.
+    pub const fn fund_mut(&mut self) -> &mut InsuranceFund {
+        &mut self.fund
+    }
+
     /// Consume the scanner and return its fund — useful for handoff to
     /// snapshot/persistence layers at chain shutdown.
     #[must_use]

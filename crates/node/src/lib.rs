@@ -64,7 +64,7 @@
 use princeps_funding::{FundingClock, FundingParams, FundingTick, MarkPrice, Position};
 use princeps_liquidation::{
     execute_adl, AccountSnapshot, AdlReport, InsuranceFund, LiquidationParams,
-    LiquidationScanner, ScanReport,
+    LiquidationScanner, ScanReport, WithdrawOutcome,
 };
 use princeps_oracle::{
     AggregatedPrice, AggregationError, FeedId, ObservationError, OracleParams, OracleState,
@@ -270,6 +270,36 @@ impl PrincepsNode {
     #[must_use]
     pub const fn scanner(&self) -> &LiquidationScanner {
         &self.scanner
+    }
+
+    /// Absorb a lending bad-debt shortfall from the integration coordinator's
+    /// insurance fund. The complement to the bridge's
+    /// `absorb_account_bad_debt` (which wipes the account's lending positions
+    /// and returns the shortfall amount).
+    ///
+    /// Typical orchestration in a long-running node:
+    /// ```ignore
+    /// let bad_debt = bridge.absorb_account_bad_debt(account, mark, prices);
+    /// let outcome = node.absorb_lending_bad_debt(bad_debt as i64);
+    /// match outcome {
+    ///     WithdrawOutcome::Covered { amount: _ } => { /* fund had enough */ }
+    ///     WithdrawOutcome::PartiallyDrained { amount: _, unfilled }
+    ///     | WithdrawOutcome::Depleted { unfilled } => {
+    ///         // Insurance fund is out — Stage 10d ADL territory or
+    ///         // protocol-level halt.
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// Non-positive `shortfall` is a no-op (returns `Covered { amount: 0 }`),
+    /// matching `InsuranceFund::withdraw_shortfall` semantics.
+    ///
+    /// Stage 22c bridge-side + this node-side method together close the
+    /// cross-layer bad-debt routing concern. Bridge-side accumulator that
+    /// feeds this per-block tick (instead of a single call per account) is
+    /// future work, gated on whether a long-running production loop emerges.
+    pub fn absorb_lending_bad_debt(&mut self, shortfall: i64) -> WithdrawOutcome {
+        self.scanner.fund_mut().withdraw_shortfall(shortfall)
     }
 
     /// Borrow the vault (read-only).
@@ -720,5 +750,57 @@ mod tests {
         let r_a = node_a.tick(input);
         let r_b = node_b.tick(input);
         assert_eq!(r_a, r_b);
+    }
+
+    // ===== Lending bad-debt routing =====
+
+    #[test]
+    fn absorb_lending_bad_debt_covered_when_fund_has_capacity() {
+        let mut node = PrincepsNode::with_insurance_fund(
+            PrincepsNodeConfig::hyperliquid_default(),
+            InsuranceFund::new(1_000),
+        );
+        let outcome = node.absorb_lending_bad_debt(300);
+        assert!(matches!(outcome, WithdrawOutcome::Covered { amount: 300 }));
+        assert_eq!(node.scanner().fund_balance(), 700);
+    }
+
+    #[test]
+    fn absorb_lending_bad_debt_partially_drained_at_boundary() {
+        let mut node = PrincepsNode::with_insurance_fund(
+            PrincepsNodeConfig::hyperliquid_default(),
+            InsuranceFund::new(100),
+        );
+        let outcome = node.absorb_lending_bad_debt(300);
+        assert!(matches!(
+            outcome,
+            WithdrawOutcome::PartiallyDrained {
+                amount: 100,
+                unfilled: 200,
+            }
+        ));
+        assert_eq!(node.scanner().fund_balance(), 0);
+    }
+
+    #[test]
+    fn absorb_lending_bad_debt_depleted_when_fund_empty() {
+        let mut node = PrincepsNode::with_insurance_fund(
+            PrincepsNodeConfig::hyperliquid_default(),
+            InsuranceFund::new(0),
+        );
+        let outcome = node.absorb_lending_bad_debt(500);
+        assert!(matches!(outcome, WithdrawOutcome::Depleted { unfilled: 500 }));
+        assert_eq!(node.scanner().fund_balance(), 0);
+    }
+
+    #[test]
+    fn absorb_lending_bad_debt_zero_shortfall_is_noop() {
+        let mut node = PrincepsNode::with_insurance_fund(
+            PrincepsNodeConfig::hyperliquid_default(),
+            InsuranceFund::new(500),
+        );
+        let outcome = node.absorb_lending_bad_debt(0);
+        assert!(matches!(outcome, WithdrawOutcome::Covered { amount: 0 }));
+        assert_eq!(node.scanner().fund_balance(), 500);
     }
 }
