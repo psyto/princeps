@@ -10,6 +10,7 @@ members = [
     "crates/liquidation",
     "crates/vault",
     "crates/lending",
+    "crates/portfolio",
     "crates/clearing",
     "crates/evm",
     "crates/consensus",
@@ -34,6 +35,7 @@ princeps-funding     = { path = "crates/funding" }
 princeps-liquidation = { path = "crates/liquidation" }
 princeps-vault       = { path = "crates/vault" }
 princeps-lending     = { path = "crates/lending" }
+princeps-portfolio   = { path = "crates/portfolio" }
 princeps-clearing    = { path = "crates/clearing" }
 princeps-evm         = { path = "crates/evm" }
 princeps-consensus   = { path = "crates/consensus" }

@@ -6824,6 +6824,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "princeps-portfolio"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "princeps-types"
 version = "0.1.0"
 dependencies = [
