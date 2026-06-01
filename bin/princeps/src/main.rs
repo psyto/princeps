@@ -110,6 +110,24 @@ enum Command {
         eth_crash_price: u128,
     },
 
+    /// Stage 24c: hands-on lending sandbox CLI. Operates on a local JSON
+    /// state file at `$HOME/.princeps/lending-state.json` (overridable).
+    /// Each subcommand loads → mutates via bridge methods → saves, so
+    /// state persists across invocations and lets users explore lending
+    /// flows without writing Rust code.
+    ///
+    /// Examples:
+    ///   princeps lending init                          # create empty state
+    ///   princeps lending deposit 1 1000                # account 1 deposits 1000 USDC
+    ///   princeps lending borrow 1 200 --eth-price 1    # account 1 borrows 200 ETH
+    ///   princeps lending health 1 --eth-price 2        # check health at ETH=2
+    ///   princeps lending scan --eth-price 2            # find underwater accounts
+    ///   princeps lending list                          # show all positions
+    Lending {
+        #[command(subcommand)]
+        action: LendingCommand,
+    },
+
     /// Drive consensus decisions through Reth-backed `LiveRethEvmBridge` +
     /// the Malachite actor engine. Stage 13c-e production-shape boot.
     RethDevnet {
@@ -196,6 +214,72 @@ enum Command {
     },
 }
 
+/// Stage 24c — per-step lending subcommands. Operate on a file-based
+/// state sandbox so each command's mutation persists.
+#[derive(Debug, Subcommand)]
+enum LendingCommand {
+    /// Initialize the lending state file with an empty USDC/ETH market
+    /// and no positions. Overwrites any existing state at the path.
+    Init {
+        /// Override path. Default: `$HOME/.princeps/lending-state.json`.
+        #[arg(long)]
+        state_file: Option<PathBuf>,
+    },
+    /// Deposit collateral on behalf of an account.
+    Deposit {
+        account: u64,
+        amount: u128,
+        #[arg(long)]
+        state_file: Option<PathBuf>,
+    },
+    /// Borrow underlying against an account's collateral (portfolio-gated).
+    Borrow {
+        account: u64,
+        amount: u128,
+        /// ETH price (USDC per ETH) used for the post-borrow health check.
+        #[arg(long, default_value_t = 1)]
+        eth_price: u64,
+        #[arg(long)]
+        state_file: Option<PathBuf>,
+    },
+    /// Repay debt for an account. Caps at outstanding debt.
+    Repay {
+        account: u64,
+        amount: u128,
+        #[arg(long)]
+        state_file: Option<PathBuf>,
+    },
+    /// Withdraw collateral (portfolio-gated post-withdraw health check).
+    Withdraw {
+        account: u64,
+        amount: u128,
+        #[arg(long, default_value_t = 1)]
+        eth_price: u64,
+        #[arg(long)]
+        state_file: Option<PathBuf>,
+    },
+    /// Show health metrics for an account at the given ETH price.
+    Health {
+        account: u64,
+        #[arg(long, default_value_t = 1)]
+        eth_price: u64,
+        #[arg(long)]
+        state_file: Option<PathBuf>,
+    },
+    /// Scan all accounts at the given ETH price, list any underwater.
+    Scan {
+        #[arg(long, default_value_t = 1)]
+        eth_price: u64,
+        #[arg(long)]
+        state_file: Option<PathBuf>,
+    },
+    /// List all open positions.
+    List {
+        #[arg(long)]
+        state_file: Option<PathBuf>,
+    },
+}
+
 /// On-disk shape of `--validators <path>`. Stage 13j.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ValidatorSetFile {
@@ -238,6 +322,7 @@ fn main() -> eyre::Result<()> {
         }
         Command::Devnet { rounds } => tokio_rt()?.block_on(run_devnet(rounds)),
         Command::LendingDemo { eth_crash_price } => run_lending_demo(eth_crash_price),
+        Command::Lending { action } => run_lending_subcommand(action),
         Command::RethDevnet {
             rounds,
             moniker,
@@ -396,6 +481,300 @@ fn run_lending_demo(eth_crash_price: u128) -> eyre::Result<()> {
     }
 
     Ok(())
+}
+
+// ============================================================
+// Stage 24c — file-based lending sandbox CLI
+// ============================================================
+
+/// On-disk shape of the lending state file. v0 single-market layout.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LendingState {
+    market: princeps_lending::Market,
+    positions: Vec<(
+        princeps_clob::AccountId,
+        princeps_lending::MarketId,
+        princeps_lending::Position,
+    )>,
+}
+
+fn resolve_lending_state_path(user: Option<&PathBuf>) -> eyre::Result<PathBuf> {
+    if let Some(p) = user {
+        return Ok(p.clone());
+    }
+    let home = std::env::var("HOME").map_err(|_| {
+        eyre::eyre!("--state-file not supplied and $HOME is not set")
+    })?;
+    Ok(PathBuf::from(home)
+        .join(".princeps")
+        .join("lending-state.json"))
+}
+
+fn make_default_market() -> princeps_lending::Market {
+    use princeps_lending::{AssetId, Bps, Index as LendingIndex, IrmParams, Market, MarketId};
+    let mut market = Market::new(
+        MarketId(0),
+        AssetId(1), // ETH underlying
+        AssetId(0), // USDC collateral
+        IrmParams {
+            base_rate_per_block: 0,
+            slope_below_kink_per_block: LendingIndex::RAY / 10_000,
+            slope_above_kink_per_block: LendingIndex::RAY / 1_000,
+            kink_bps: Bps(8_000),
+        },
+        Bps(9_500), // LT 95%
+        Bps(500),
+        Bps(1_000),
+        0,
+    );
+    market.total_supplied = 1_000_000;
+    market
+}
+
+fn load_lending_state(path: &Path) -> eyre::Result<LendingState> {
+    let bytes = std::fs::read(path)
+        .map_err(|e| eyre::eyre!("read {}: {}", path.display(), e))?;
+    let state: LendingState = serde_json::from_slice(&bytes)
+        .map_err(|e| eyre::eyre!("parse {}: {}", path.display(), e))?;
+    Ok(state)
+}
+
+fn save_lending_state(path: &Path, state: &LendingState) -> eyre::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(state)?;
+    std::fs::write(path, json)?;
+    Ok(())
+}
+
+fn bridge_from_state(state: &LendingState) -> LiveRethEvmBridge<()> {
+    let bridge = LiveRethEvmBridge::new((), dev_chain_spec());
+    bridge.with_markets_mut(|m| {
+        m.insert(state.market.id, state.market.clone());
+    });
+    bridge.with_positions_mut(|p| {
+        for (acc, mid, pos) in &state.positions {
+            p.insert((*acc, *mid), pos.clone());
+        }
+    });
+    bridge
+}
+
+fn state_from_bridge(bridge: &LiveRethEvmBridge<()>) -> LendingState {
+    let markets = bridge.markets_snapshot();
+    let market = markets
+        .into_iter()
+        .next()
+        .map(|(_, m)| m)
+        .unwrap_or_else(make_default_market);
+    let positions = bridge
+        .positions_snapshot()
+        .into_iter()
+        .map(|((acc, mid), pos)| (acc, mid, pos))
+        .collect();
+    LendingState { market, positions }
+}
+
+fn run_lending_subcommand(cmd: LendingCommand) -> eyre::Result<()> {
+    use princeps_clob::AccountId;
+    use princeps_lending::MarketId;
+    use std::collections::BTreeMap;
+
+    // Resolve state-file path from the command's --state-file flag (each
+    // variant has its own, all named identically).
+    let state_path = match &cmd {
+        LendingCommand::Init { state_file }
+        | LendingCommand::Deposit { state_file, .. }
+        | LendingCommand::Borrow { state_file, .. }
+        | LendingCommand::Repay { state_file, .. }
+        | LendingCommand::Withdraw { state_file, .. }
+        | LendingCommand::Health { state_file, .. }
+        | LendingCommand::Scan { state_file, .. }
+        | LendingCommand::List { state_file } => resolve_lending_state_path(state_file.as_ref())?,
+    };
+
+    // `init` writes fresh state and returns.
+    if let LendingCommand::Init { .. } = &cmd {
+        let state = LendingState {
+            market: make_default_market(),
+            positions: Vec::new(),
+        };
+        save_lending_state(&state_path, &state)?;
+        println!(
+            "Initialized lending sandbox at {} (empty USDC/ETH market, no positions).",
+            state_path.display()
+        );
+        return Ok(());
+    }
+
+    // All other commands need an existing state file.
+    let state = load_lending_state(&state_path).map_err(|e| {
+        eyre::eyre!(
+            "{e}\n  hint: run `princeps lending init` first to create the sandbox."
+        )
+    })?;
+    let bridge = bridge_from_state(&state);
+
+    // Run the operation; for write ops we save back, for read ops we don't.
+    let mut should_save = true;
+    match cmd {
+        LendingCommand::Init { .. } => unreachable!(),
+
+        LendingCommand::Deposit { account, amount, .. } => {
+            bridge
+                .lending_deposit_collateral(AccountId(account), MarketId(0), amount)
+                .map_err(|e| eyre::eyre!("deposit failed: {e:?}"))?;
+            print_account_state(&bridge, account, "deposit");
+        }
+        LendingCommand::Borrow {
+            account, amount, eth_price, ..
+        } => {
+            let mut prices = BTreeMap::new();
+            prices.insert(MarketId(0), (1u128, u128::from(eth_price)));
+            bridge
+                .lending_borrow_unified(
+                    AccountId(account),
+                    MarketId(0),
+                    amount,
+                    MarkPrice(0),
+                    0,
+                    &prices,
+                )
+                .map_err(|e| eyre::eyre!("borrow failed: {e:?}"))?;
+            print_account_state(&bridge, account, "borrow");
+        }
+        LendingCommand::Repay { account, amount, .. } => {
+            let repaid = bridge
+                .lending_repay(AccountId(account), MarketId(0), amount)
+                .map_err(|e| eyre::eyre!("repay failed: {e:?}"))?;
+            println!(
+                "Repaid {} units (requested {}). Account {} updated.",
+                repaid, amount, account
+            );
+            print_account_state(&bridge, account, "repay");
+        }
+        LendingCommand::Withdraw {
+            account, amount, eth_price, ..
+        } => {
+            let mut prices = BTreeMap::new();
+            prices.insert(MarketId(0), (1u128, u128::from(eth_price)));
+            bridge
+                .lending_withdraw_collateral_unified(
+                    AccountId(account),
+                    MarketId(0),
+                    amount,
+                    MarkPrice(0),
+                    0,
+                    &prices,
+                )
+                .map_err(|e| eyre::eyre!("withdraw failed: {e:?}"))?;
+            print_account_state(&bridge, account, "withdraw");
+        }
+        LendingCommand::Health { account, eth_price, .. } => {
+            should_save = false;
+            print_health(&bridge, account, eth_price);
+        }
+        LendingCommand::Scan { eth_price, .. } => {
+            should_save = false;
+            print_scan(&bridge, eth_price);
+        }
+        LendingCommand::List { .. } => {
+            should_save = false;
+            print_position_list(&bridge);
+        }
+    }
+
+    if should_save {
+        let updated = state_from_bridge(&bridge);
+        save_lending_state(&state_path, &updated)?;
+    }
+    Ok(())
+}
+
+fn print_account_state(bridge: &LiveRethEvmBridge<()>, account: u64, action: &str) {
+    use princeps_clob::AccountId;
+    let pos = bridge
+        .positions_snapshot()
+        .into_iter()
+        .find(|((a, _), _)| *a == AccountId(account))
+        .map(|(_, p)| p);
+    match pos {
+        Some(p) => println!(
+            "Account {} after {}: collateral={} scaled_debt={}",
+            account, action, p.collateral_amount, p.scaled_debt
+        ),
+        None => println!("Account {} after {}: (no position)", account, action),
+    }
+}
+
+fn print_health(bridge: &LiveRethEvmBridge<()>, account: u64, eth_price: u64) {
+    use princeps_clob::AccountId;
+    use princeps_lending::MarketId;
+    use std::collections::BTreeMap;
+    let mut prices = BTreeMap::new();
+    prices.insert(MarketId(0), (1u128, u128::from(eth_price)));
+    let mark = MarkPrice(0);
+    let inputs =
+        bridge.compute_account_portfolio_inputs(AccountId(account), mark, 0, &prices);
+    let free = bridge.account_free_equity(AccountId(account), mark, 0, &prices);
+    let healthy = bridge.account_is_healthy_portfolio(AccountId(account), mark, 0, &prices);
+
+    println!("Account {} (at ETH price {}):", account, eth_price);
+    println!(
+        "  Lending collateral (LT-adjusted): {}",
+        inputs.lending_adjusted_collateral_value
+    );
+    println!("  Lending debt:                     {}", inputs.lending_debt_value);
+    println!("  Free equity:                      {}", free);
+    println!(
+        "  Verdict:                          {}",
+        if healthy { "HEALTHY" } else { "LIQUIDATABLE" }
+    );
+}
+
+fn print_scan(bridge: &LiveRethEvmBridge<()>, eth_price: u64) {
+    use princeps_lending::MarketId;
+    use std::collections::BTreeMap;
+    let mut prices = BTreeMap::new();
+    prices.insert(MarketId(0), (1u128, u128::from(eth_price)));
+    let report = bridge.scan_unified(MarkPrice(0), 0, &prices);
+    println!(
+        "Scanned {} account(s) at ETH price {}; {} flagged.",
+        report.scanned,
+        eth_price,
+        report.flagged.len()
+    );
+    if report.flagged.is_empty() {
+        return;
+    }
+    println!();
+    println!("Flagged (free_equity < 0):");
+    for (acc, free) in report.flagged {
+        println!("  Account {} → free_equity = {}", acc.0, free);
+    }
+}
+
+fn print_position_list(bridge: &LiveRethEvmBridge<()>) {
+    let positions = bridge.positions_snapshot();
+    if positions.is_empty() {
+        println!("(no positions)");
+        return;
+    }
+    println!(
+        "{:>10}  {:>10}  {:>12}  {:>12}",
+        "Account", "Market", "Collateral", "ScaledDebt"
+    );
+    println!(
+        "{:>10}  {:>10}  {:>12}  {:>12}",
+        "-------", "------", "----------", "----------"
+    );
+    for ((acc, mid), pos) in positions {
+        println!(
+            "{:>10}  {:>10}  {:>12}  {:>12}",
+            acc.0, mid.0, pos.collateral_amount, pos.scaled_debt
+        );
+    }
 }
 
 fn resolve_data_dir(user_supplied: Option<&PathBuf>) -> eyre::Result<PathBuf> {

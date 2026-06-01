@@ -132,6 +132,17 @@ cargo run --release --bin princeps-liquidator-bot -- --eth-price 3
 #   curl 'http://localhost:8080/lending/health?account=1&perp_mark=0&perp_im_bps=0&coll_price=1&debt_price=2'
 cargo run --release --bin princeps-lending-rpc-server
 
+# Per-step lending CLI (Stage 24c) — hands-on lending against a local JSON
+# state sandbox at $HOME/.princeps/lending-state.json. Each command persists
+# its mutation; perfect for exploration without writing Rust.
+cargo run --release --bin princeps -- lending init
+cargo run --release --bin princeps -- lending deposit 1 1000
+cargo run --release --bin princeps -- lending borrow 1 200 --eth-price 1
+cargo run --release --bin princeps -- lending list
+cargo run --release --bin princeps -- lending health 1 --eth-price 6   # LIQUIDATABLE
+cargo run --release --bin princeps -- lending scan --eth-price 6
+cargo run --release --bin princeps -- lending repay 1 100
+
 # Single-validator devnet (in-memory bridge)
 cargo run --release -- devnet 1
 
