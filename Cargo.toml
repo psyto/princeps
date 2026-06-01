@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "bin/princeps",
+    "bin/liquidator-bot",
     "crates/types",
     "crates/codec",
     "crates/clob",

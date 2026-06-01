@@ -6802,6 +6802,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "princeps-liquidator-bot"
+version = "0.1.0"
+dependencies = [
+ "alloy-genesis",
+ "clap",
+ "eyre",
+ "princeps-clearing",
+ "princeps-clob",
+ "princeps-evm",
+ "princeps-funding",
+ "princeps-lending",
+ "reth-chainspec",
+ "serde_json",
+]
+
+[[package]]
 name = "princeps-node"
 version = "0.1.0"
 dependencies = [

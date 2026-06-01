@@ -119,6 +119,12 @@ cargo run --release -- lending-demo
 # Try different crash prices:
 cargo run --release -- lending-demo --eth-crash-price 85
 
+# Sample liquidator bot (Stage 24e) — seeds 5 accounts, raises ETH price,
+# scans for underwater positions, liquidates them in order of most-underwater,
+# falls back to bad-debt absorption when collateral can't cover.
+cargo run --release --bin princeps-liquidator-bot
+cargo run --release --bin princeps-liquidator-bot -- --eth-price 3
+
 # Single-validator devnet (in-memory bridge)
 cargo run --release -- devnet 1
 
