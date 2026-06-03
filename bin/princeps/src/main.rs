@@ -1085,6 +1085,14 @@ async fn run_reth_devnet(
     let public = private.public_key();
     println!("[3/6] {key_status} validator key from {}", key_path.display());
 
+    // Write a `validator-pubkey.hex` sidecar so scripts / operators can
+    // read the pubkey without parsing logs or reimplementing Ed25519
+    // scalar multiplication. Idempotent — overwrites every boot so a
+    // stale sidecar from a different key file can't drift.
+    let pubkey_path = data_dir_path.join("validator-pubkey.hex");
+    let pubkey_hex = hex::encode(public.as_bytes());
+    std::fs::write(&pubkey_path, format!("{pubkey_hex}\n"))?;
+
     // Stage 13j: validator set — load from file if given, else
     // construct single-validator set from the loaded key (preserves
     // pre-13j behavior).

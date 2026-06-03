@@ -22,7 +22,7 @@
 | 24d (`princeps-lending-rpc-server`) | ✅ Complete | — | Read-only HTTP JSON RPC over in-process bridge, 5 seeded accounts |
 | 24e (sample liquidator bot) | ✅ Complete | — | `princeps-liquidator-bot` — seeds, raises ETH, liquidates most-underwater first |
 | 24a (USDC/ETH `reth-devnet` lending genesis) | ✅ Complete | — | `seed_v0_lending_markets` + `seed_v0_demo_accounts` registered on fresh chain; lending_prices=(1,1) wired into per-block scan |
-| Multi-validator expansion (3+ validators) | ⏳ Pending | — | Builds on Stage 18a follower replication |
+| Multi-validator expansion (3+ validators) | ✅ Complete | — | Code path N-agnostic since Stage 13l; `scripts/devnet-3.sh` boots alice/bob/carol and diffs convergence; coordinator snapshots byte-identical |
 | Public testnet deploy | ⏳ Pending | — | Validators, monitoring, faucet |
 
 **Total v0 tests passing**: 464 across 13 crates (61 lending + 14 portfolio + 84 evm + 14 node + 90 liquidation + 22 funding + 57 oracle + 44 vault + 24 clearing + 12 clob + 42 consensus + 0 types/codec).

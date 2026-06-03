@@ -101,8 +101,12 @@ Princeps inherits a working Reth + Malachite kernel from [openhl](https://github
 - ✅ `seed_v0_lending_markets` / `seed_v0_demo_accounts` — fresh `reth-devnet` boots register the USDC/ETH market and seed 5 demo accounts (matching the liquidator-bot fixture) so the per-block hook fires against real lending state instead of an empty bridge
 - ✅ Lending prices wired into the per-block `scan_unified` (hardcoded `(1, 1)` for now; v1 will read from the oracle's lending feeds)
 
+**Built — multi-validator (N≥3) verified reproducibly (shipped 2026-06-03):**
+- ✅ `--validators` JSON dial-list wiring (Stage 13l) confirmed N-agnostic; `with_persistent_peers` forwards peer multiaddrs into Malachite's libp2p config
+- ✅ `validator-pubkey.hex` sidecar written next to `validator-key.json` so external tooling can read pubkeys without parsing logs or reimplementing Ed25519
+- ✅ `scripts/devnet-3.sh` — one-command alice/bob/carol bring-up that wipes prior bridge/coordinator state, boots three `reth-devnet` processes in parallel against a shared validator set, and diffs the resulting coordinator snapshots to confirm byte-identical convergence
+
 **Next (remaining v0 work):**
-- 🚧 Multi-validator network expansion (3+ validators) building on Stage 18a follower replication
 - 🚧 Public testnet deploy — validator infra, monitoring, faucet
 
 ## Architecture

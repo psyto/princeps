@@ -147,6 +147,22 @@ diff \
 
 The bring-up generalizes to any validator count — the binary reads
 the full set from `--validators` and dials every peer except itself.
+For the N=3 case there's now a scripted equivalent of the manual
+walkthrough below:
+
+```bash
+./scripts/devnet-3.sh                    # default: 3 rounds
+PRINCEPS_ROUNDS=10 ./scripts/devnet-3.sh # more rounds
+```
+
+The script generates keys (once) under `/tmp/princeps-devnet-3/{a,b,c}`,
+writes a shared `validators.json` from the `validator-pubkey.hex`
+sidecars (each `reth-devnet` boot now writes one alongside its
+`validator-key.json`), boots all three nodes in parallel, and diffs the
+resulting coordinator snapshots. Exit code 0 means byte-identical
+convergence. The same flow runs the manual steps below; reach for the
+walkthrough when debugging.
+
 Verified at N=3 (alice/bob/carol):
 
 1. Generate three keys: run each node once single-validator
