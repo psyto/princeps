@@ -21,7 +21,7 @@
 | 24c (per-step lending CLI) | ✅ Complete | — | `princeps lending {init,deposit,borrow,repay,withdraw,health,scan,list}` |
 | 24d (`princeps-lending-rpc-server`) | ✅ Complete | — | Read-only HTTP JSON RPC over in-process bridge, 5 seeded accounts |
 | 24e (sample liquidator bot) | ✅ Complete | — | `princeps-liquidator-bot` — seeds, raises ETH, liquidates most-underwater first |
-| 24a (USDC/ETH `reth-devnet` chain-spec) | ⏳ Pending | — | Demo currently uses in-process bridge; promote to real EVM path |
+| 24a (USDC/ETH `reth-devnet` lending genesis) | ✅ Complete | — | `seed_v0_lending_markets` + `seed_v0_demo_accounts` registered on fresh chain; lending_prices=(1,1) wired into per-block scan |
 | Multi-validator expansion (3+ validators) | ⏳ Pending | — | Builds on Stage 18a follower replication |
 | Public testnet deploy | ⏳ Pending | — | Validators, monitoring, faucet |
 

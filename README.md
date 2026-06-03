@@ -87,9 +87,12 @@ Princeps inherits a working Reth + Malachite kernel from [openhl](https://github
 - ✅ `princeps-lending-rpc-server` — read-only HTTP JSON RPC for `/lending/markets`, `/lending/positions`, `/lending/scan`, `/lending/health` over an in-process bridge with 5 seeded accounts
 - ✅ `princeps-liquidator-bot` — sample liquidator (~200 lines) that seeds 5 accounts, raises ETH price, scans for underwater positions, liquidates most-underwater first, falls back to bad-debt absorption
 
+**Built — v0 lending genesis on the running node (Stage 24a, shipped 2026-06-03):**
+- ✅ `seed_v0_lending_markets` / `seed_v0_demo_accounts` — fresh `reth-devnet` boots register the USDC/ETH market and seed 5 demo accounts (matching the liquidator-bot fixture) so the per-block hook fires against real lending state instead of an empty bridge
+- ✅ Lending prices wired into the per-block `scan_unified` (hardcoded `(1, 1)` for now; v1 will read from the oracle's lending feeds)
+
 **Next (remaining v0 work):**
 - 🚧 Multi-validator network expansion (3+ validators) building on Stage 18a follower replication
-- 🚧 USDC/ETH `reth-devnet` chain-spec so the demo runs on the real EVM path end-to-end (Stage 24a proper)
 - 🚧 Public testnet deploy — validator infra, monitoring, faucet
 
 ## Architecture

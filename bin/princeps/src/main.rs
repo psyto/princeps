@@ -1034,6 +1034,19 @@ async fn run_reth_devnet(
         println!("      no prior snapshot (fresh chain)");
         (None, 0)
     };
+
+    // Stage 24a — on a fresh chain, register the v0 USDC/ETH lending
+    // market and seed 5 demo accounts borrowing ETH at varying
+    // leverage. On restart, markets + positions are restored from the
+    // bridge snapshot so we deliberately skip this to avoid
+    // double-seeding (which would panic on the second `lending_borrow`
+    // against the same account).
+    if resume_parent.is_none() {
+        seed_v0_lending_markets(bridge.as_ref());
+        seed_v0_demo_accounts(bridge.as_ref());
+        println!("      lending genesis  = USDC/ETH market + 5 demo accounts seeded");
+    }
+
     let initial_parent_for_consensus = resume_parent.unwrap_or(genesis_parent);
     // Stage 13i: consensus height = prior decisions + 1, so log lines
     // and (future) multi-validator peers see a continuous height
@@ -1384,10 +1397,18 @@ async fn run_reth_devnet(
                         lending_report.block,
                     );
                 }
-                let lending_prices: std::collections::BTreeMap<
+                // Stage 24a — hardcoded prices matching the seed
+                // genesis (USDC=1, ETH=1). v1 will read these from the
+                // oracle's published lending feeds once the oracle
+                // type → lending price-pair bridge lands. With the seed
+                // accounts all healthy at (1, 1), the unified scan no-ops
+                // here; raising ETH via an external mutation (e.g., the
+                // lending CLI's --eth-price) makes accounts 2–5 flag.
+                let mut lending_prices: std::collections::BTreeMap<
                     princeps_lending::MarketId,
                     (u128, u128),
                 > = std::collections::BTreeMap::new();
+                lending_prices.insert(princeps_lending::MarketId(0), (1, 1));
                 let perp_im_bps = node.config().liquidation_params.initial_margin_bps;
                 let unified = bridge_for_hook.scan_unified(mark, perp_im_bps, &lending_prices);
                 for (account, free) in &unified.flagged {
@@ -1583,6 +1604,67 @@ async fn run_reth_devnet(
     println!("reth-devnet teardown complete");
 
     Ok(())
+}
+
+/// Stage 24a — register the v0 USDC/ETH lending market on a freshly
+/// constructed bridge at boot. Parameters match the liquidator-bot
+/// and lending-rpc-server demos: LT 95%, bonus 5%, reserve factor
+/// 10%, kinked IRM at 80% utilization, seed supply of 1M USDC so a
+/// borrow has somewhere to come from.
+fn seed_v0_lending_markets<P>(bridge: &LiveRethEvmBridge<P>) {
+    use princeps_lending::{AssetId, Bps, Index as LendingIndex, IrmParams, Market, MarketId};
+    bridge.with_markets_mut(|m| {
+        let mut market = Market::new(
+            MarketId(0),
+            AssetId(1), // ETH underlying (borrowed)
+            AssetId(0), // USDC collateral
+            IrmParams {
+                base_rate_per_block: 0,
+                slope_below_kink_per_block: LendingIndex::RAY / 10_000,
+                slope_above_kink_per_block: LendingIndex::RAY / 1_000,
+                kink_bps: Bps(8_000),
+            },
+            Bps(9_500), // LT 95%
+            Bps(500),   // liquidation bonus 5%
+            Bps(1_000), // reserve factor 10%
+            0,
+        );
+        market.total_supplied = 1_000_000;
+        m.insert(MarketId(0), market);
+    });
+}
+
+/// Stage 24a — seed 5 demo accounts borrowing ETH at varying leverage
+/// against the v0 USDC/ETH market. Mirrors the liquidator-bot fixture
+/// so the same prime-broker scenario plays out on the running
+/// reth-devnet without further setup. All accounts are healthy at the
+/// seed price (USDC=1, ETH=1); pumping ETH price to 2 flags accounts
+/// 2–5 — exactly what the per-block `scan_unified` will surface.
+fn seed_v0_demo_accounts<P>(bridge: &LiveRethEvmBridge<P>) {
+    use princeps_clearing::Account;
+    use princeps_clob::AccountId as LendingAccountId;
+    use princeps_lending::MarketId;
+    let setups: [(u64, u128, u128); 5] = [
+        (1, 1_000, 200), // very healthy
+        (2, 500, 300),
+        (3, 200, 150),
+        (4, 100, 90),
+        (5, 80, 70), // thinnest
+    ];
+    for &(acct_id, coll, debt) in &setups {
+        let acct = LendingAccountId(acct_id);
+        bridge
+            .lending_deposit_collateral(acct, MarketId(0), coll)
+            .expect("seed deposit");
+        bridge
+            .lending_borrow(acct, MarketId(0), debt, 1, 1)
+            .expect("seed borrow");
+        // Empty perp account so the unified scan walks this account.
+        bridge.with_accounts_mut(|map| {
+            let a = Account::flat(acct);
+            map.insert(acct, a);
+        });
+    }
 }
 
 /// Load a `ChainSpec` from a JSON file containing an
