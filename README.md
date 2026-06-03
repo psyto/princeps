@@ -50,7 +50,7 @@ Seven foundational decisions, locked for the platform lifecycle:
 
 ## Status
 
-Princeps inherits a working Reth + Malachite kernel from [openhl](https://github.com/psyto/openhl) and extends it with the v0 lending kernel. Fully functional as of 2026-06-01. **369+ tests pass across 12 crates.**
+Princeps inherits a working Reth + Malachite kernel from [openhl](https://github.com/psyto/openhl) and extends it with the v0 lending kernel and the prime-broker portfolio engine. Fully functional as of 2026-06-03. **464 tests pass across 13 crates.**
 
 **Built — kernel inherited from openhl (Stages 1–18a):**
 - ✅ Consensus substrate (Reth + Malachite, 4-message bridge)
@@ -65,20 +65,32 @@ Princeps inherits a working Reth + Malachite kernel from [openhl](https://github
 - ✅ Node coordinator + `reth-devnet` boot ceremony (persistent MDBX, validator key persistence, chain-spec loading, per-block integration tick)
 - ✅ Margin-aware withdraw with revert-safe precompile mutations (`PrincepsRevertGuard`)
 
-**Built — v0 lending kernel (Stages 19–22b, shipped 2026-06-01):**
+**Built — v0 lending kernel (Stages 19–22, shipped 2026-06-01):**
 - ✅ `princeps-lending` crate — pure compute: market state, position state, kinked IRM, health factor compute, per-block interest accrual (61 tests across 5 modules)
 - ✅ Bridge integration — `LiveRethEvmBridge` owns `BTreeMap<MarketId, Market>` + `BTreeMap<(AccountId, MarketId), Position>` with `with_*_mut` accessors
 - ✅ Bridge mutation methods — `lending_deposit_collateral` / `lending_borrow` / `lending_repay` / `lending_withdraw_collateral` / `lending_liquidate`, with simulate-then-commit health gating
 - ✅ Per-block lending tick — `lending_tick` accrues interest across all registered markets; `scan_lending_health` flags HF < 1.0 positions
 - ✅ Six EVM precompiles at `0x0c1f`–`0x0c24` — full lending lifecycle callable from any Solidity contract (see [EVM precompiles](#evm-precompiles) below)
+- ✅ Unified perp+lending scan report — single liquidation surface across both products (Stage 22a)
+- ✅ Bad-debt absorption — bridge surfaces shortfall, `PrincepsNode` coordinator routes it into the `InsuranceFund` (Stage 22c, cross-layer)
+- ✅ Lending revert-guard — `BridgeStateSnapshot` extended to cover markets + positions for atomic precompile mutations
+
+**Built — v0 prime-broker portfolio engine (Stage 23, shipped 2026-06-03):**
+- ✅ `princeps-portfolio` crate — unified cross-margin compute: one health number across lending collateral + lending debt + perp unrealized PnL + perp initial margin (14 tests)
+- ✅ Bridge unified-margin aggregator — `LiveRethEvmBridge::compute_account_health` joins per-account lending positions and perp state into a single `PortfolioHealth`
+- ✅ Portfolio-gated borrow/withdraw — borrow and withdraw_collateral now check portfolio free-equity (not just lending HF), so a losing perp shrinks lending capacity and vice versa
+- ✅ Cross-margin scenario test — same account, siloed view → liquidatable, unified portfolio view → healthy; the prime broker thesis demonstrated end-to-end
+
+**Built — v0 demo + observability (Stage 24, shipped 2026-06-03):**
+- ✅ `princeps lending-demo` subcommand — runs Alice's canonical prime-broker scenario in ~1 second (deposit USDC → borrow ETH → open perp → market crash → siloed vs unified margin verdict)
+- ✅ `princeps lending <subcommand>` per-step CLI — `init` / `deposit` / `borrow` / `repay` / `withdraw` / `health` / `scan` / `list` against a local JSON state sandbox
+- ✅ `princeps-lending-rpc-server` — read-only HTTP JSON RPC for `/lending/markets`, `/lending/positions`, `/lending/scan`, `/lending/health` over an in-process bridge with 5 seeded accounts
+- ✅ `princeps-liquidator-bot` — sample liquidator (~200 lines) that seeds 5 accounts, raises ETH price, scans for underwater positions, liquidates most-underwater first, falls back to bad-debt absorption
 
 **Next (remaining v0 work):**
-- 🚧 Unified scan report (combining perp + lending into one liquidation surface; Stage 22a)
-- 🚧 Bad-debt absorption — when HF < 0, route to `InsuranceFund` via `PrincepsNode` (Stage 22c, cross-layer)
-- 🚧 Cross-margin engine — lending and perp positions sharing one portfolio risk model (Stage 23, the prime broker thesis)
-- 🚧 Single-asset-pair USDC/ETH devnet + CLI demo + sample liquidator bot (Stage 24)
 - 🚧 Multi-validator network expansion (3+ validators) building on Stage 18a follower replication
-- 🚧 Public testnet deploy
+- 🚧 USDC/ETH `reth-devnet` chain-spec so the demo runs on the real EVM path end-to-end (Stage 24a proper)
+- 🚧 Public testnet deploy — validator infra, monitoring, faucet
 
 ## Architecture
 
@@ -93,13 +105,14 @@ bin/princeps
 │   ├── oracle        # median-of-medians + signed observations
 │   ├── vault         # share-based collateral pooling
 │   ├── clearing      # settlement / clearing primitives
-│   ├── lending       # market state, IRM, health factor, interest accrual (Stages 19-22b)
-│   ├── evm           # Reth EVM bridge + custom precompiles
+│   ├── lending       # market state, IRM, health factor, interest accrual (Stages 19-22)
+│   ├── portfolio     # unified cross-margin compute: lending + perp → one health (Stage 23a)
+│   ├── evm           # Reth EVM bridge + custom precompiles + portfolio aggregator
 │   ├── consensus     # Malachite integration
-│   └── node          # PrincepsNode coordinator (tick driver)
+│   └── node          # PrincepsNode coordinator (tick driver, bad-debt routing)
 ```
 
-**Pure / I-O split:** state machines (`types`, `codec`, `clob`, `funding`, `liquidation`, `oracle`, `vault`, `lending`) have no I/O — deterministic, microsecond unit tests. I/O boundary (`evm`, `consensus`, `node`) talks to the outside world.
+**Pure / I-O split:** state machines (`types`, `codec`, `clob`, `funding`, `liquidation`, `oracle`, `vault`, `lending`, `portfolio`) have no I/O — deterministic, microsecond unit tests. I/O boundary (`evm`, `consensus`, `node`) talks to the outside world.
 
 **Workspace defaults:** edition 2024, resolver 3, rust 1.95+, `unsafe_code = forbid`, release LTO + abort + strip.
 

@@ -4,21 +4,28 @@
 **Target**: Q3 2026 public testnet of the lending primitive + cross-margin model
 **Scope**: Single asset pair (USDC collateral, ETH borrow) with deterministic sub-second liquidations and portfolio margin
 
-## Progress as of 2026-06-01
+## Progress as of 2026-06-03
 
 | Stage | Status | Tests | Notes |
 |---|---|---|---|
 | 19a-e (`princeps-lending` crate, pure compute) | ✅ Complete | 61 | 5 modules: types, position helpers, IRM, health, interest accrual |
 | 20a-d (bridge integration) | ✅ Complete | 13 | Markets + positions on bridge, lending tick, scan, 4 mutation methods |
 | 21a-e (5 EVM precompiles) | ✅ Complete | 4 | deposit / borrow / repay / withdraw / health at `0x0c1f`–`0x0c23` |
+| 22a (unified perp+lending scan report) | ✅ Complete | — | `LiveRethEvmBridge::scan_unified_health` joins perp + lending into one surface |
 | 22b (liquidation precompile) | ✅ Complete | 5 | `lending_liquidate` bridge method + precompile at `0x0c24` |
-| 22a (unified perp+lending scan report) | ⏳ Pending | — | Combines `ScanReport` + `LendingHealthScanReport` |
-| 22c (bad-debt absorption) | ⏳ Pending | — | Cross-layer — needs `PrincepsNode::InsuranceFund` integration |
-| 23 (cross-margin) | ⏳ Pending | — | The prime broker thesis: one portfolio health across lending + perps |
-| 24 (demo + observability) | ⏳ Pending | — | USDC/ETH devnet + CLI + sample liquidator bot |
+| 22c (bad-debt absorption) | ✅ Complete | — | Bridge surfaces shortfall; `PrincepsNode` coordinator routes into `InsuranceFund` |
+| 23a (`princeps-portfolio` crate) | ✅ Complete | 14 | Unified cross-margin compute (lending + perp → one health) |
+| 23b (bridge unified-margin aggregator) | ✅ Complete | — | `compute_account_health` joins lending positions + perp state into `PortfolioHealth` |
+| 23c (portfolio-gated borrow/withdraw) | ✅ Complete | — | Borrow + withdraw_collateral now check portfolio free-equity, not just lending HF |
+| 24b (`princeps lending-demo`) | ✅ Complete | — | Alice's prime-broker scenario in ~1s (siloed vs unified verdict) |
+| 24c (per-step lending CLI) | ✅ Complete | — | `princeps lending {init,deposit,borrow,repay,withdraw,health,scan,list}` |
+| 24d (`princeps-lending-rpc-server`) | ✅ Complete | — | Read-only HTTP JSON RPC over in-process bridge, 5 seeded accounts |
+| 24e (sample liquidator bot) | ✅ Complete | — | `princeps-liquidator-bot` — seeds, raises ETH, liquidates most-underwater first |
+| 24a (USDC/ETH `reth-devnet` chain-spec) | ⏳ Pending | — | Demo currently uses in-process bridge; promote to real EVM path |
+| Multi-validator expansion (3+ validators) | ⏳ Pending | — | Builds on Stage 18a follower replication |
 | Public testnet deploy | ⏳ Pending | — | Validators, monitoring, faucet |
 
-**Total v0 lending tests passing**: 83 (61 in `princeps-lending` + 22 in `princeps-evm` covering bridge methods + precompile e2e).
+**Total v0 tests passing**: 464 across 13 crates (61 lending + 14 portfolio + 84 evm + 14 node + 90 liquidation + 22 funding + 57 oracle + 44 vault + 24 clearing + 12 clob + 42 consensus + 0 types/codec).
 
 **v0 lending precompile suite (callable from any Solidity contract):**
 
