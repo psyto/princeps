@@ -21,6 +21,12 @@ Architectural Decision Records for the Princeps platform. ADR-001 through ADR-00
 | [006](./006-identity-anon-default-kyc-overlay.md) | Identity: anon-default, KYC as L3 overlay at v3 | Accepted |
 | [007](./007-token-none-until-revenue.md) | Token: none until real revenue | Accepted |
 
+## Operational extensions
+
+| # | Title | Status |
+|---|---|---|
+| [008](./008-pre-token-validator-policy.md) | Pre-token validator policy: permissioned + legally bound until tokenomics ships | Accepted |
+
 ## How to add a new ADR
 
 1. Number sequentially (ADR-008, ADR-009, ...).

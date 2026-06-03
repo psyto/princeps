@@ -61,7 +61,7 @@
 //! keeps each layer independently testable. The `bin/princeps` binary
 //! will own wiring of these two layers together.
 
-use princeps_funding::{FundingClock, FundingParams, FundingTick, MarkPrice, Position};
+use princeps_funding::{FundingClock, FundingParams, FundingTick, IndexPrice, MarkPrice, Position};
 use princeps_liquidation::{
     execute_adl, AccountSnapshot, AdlReport, InsuranceFund, LiquidationParams,
     LiquidationScanner, ScanReport, WithdrawOutcome,
@@ -72,6 +72,61 @@ use princeps_oracle::{
 };
 use princeps_vault::{VaultParams, VaultState};
 use serde::{Deserialize, Serialize};
+
+/// Oracle circuit-breaker parameters (threat-model row O-3).
+///
+/// Per-block deviation guard on the aggregated oracle price. When a
+/// refresh produces a price that differs from the prior cached price by
+/// more than `max_per_block_deviation_bps`, the breaker trips for
+/// `halt_duration_blocks` blocks. While tripped, the per-block lending
+/// scan / bad-debt absorption loop in `bin/princeps` skips its run —
+/// liquidations on a suspect oracle would be the very thing the attacker
+/// is trying to trigger. Repayments are not gated (always safe to reduce
+/// debt) and existing perp settlement continues to use the last cached
+/// good price.
+///
+/// At v0 the breaker only short-circuits the coordinator-driven loop;
+/// precompile-level enforcement (revert on borrow / withdraw during
+/// halt) is v1 work because it requires the precompiles to read
+/// coordinator state, which they currently don't. The threat model
+/// (`docs/threat-model.md`, row O-3) flags this scope.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CircuitBreakerParams {
+    /// Maximum allowed per-block move of the aggregated oracle price,
+    /// expressed in basis points of the prior cached price. A value of
+    /// `0` disables the guard entirely (any move accepted); `2000` =
+    /// 20%, a reasonable v0 default for ETH-scale volatility.
+    pub max_per_block_deviation_bps: u32,
+    /// Number of blocks the breaker stays tripped after firing. Each
+    /// new anomalous observation re-arms `oracle_halt_until` to the new
+    /// maximum, so a sustained spike keeps the halt extended rather
+    /// than letting it expire mid-attack.
+    pub halt_duration_blocks: u64,
+}
+
+impl CircuitBreakerParams {
+    /// v0 default: 20% per-block move trips the breaker for 50 blocks
+    /// (≈ 50 seconds at 1s block time). Both values are open questions
+    /// for tuning during testnet — too tight and benign volatility
+    /// halts the protocol; too loose and oracle attacks proceed.
+    #[must_use]
+    pub const fn v0_default() -> Self {
+        Self {
+            max_per_block_deviation_bps: 2_000,
+            halt_duration_blocks: 50,
+        }
+    }
+
+    /// Disabled — the guard accepts any move and never trips. Useful
+    /// for unit tests of unrelated tick paths.
+    #[must_use]
+    pub const fn disabled() -> Self {
+        Self {
+            max_per_block_deviation_bps: 0,
+            halt_duration_blocks: 0,
+        }
+    }
+}
 
 /// Static configuration for the node. Set once at chain genesis;
 /// changing values mid-chain would fork the network.
@@ -90,6 +145,9 @@ pub struct PrincepsNodeConfig {
     pub vault_params: VaultParams,
     /// Funding clock parameters (interval, rate cap, divisor).
     pub funding_params: FundingParams,
+    /// Oracle circuit-breaker thresholds (per-block deviation guard +
+    /// halt duration). See [`CircuitBreakerParams`].
+    pub circuit_breaker_params: CircuitBreakerParams,
     /// When `true`, the tick auto-runs ADL on any
     /// `ScanReport::unfilled_deficit > 0`. When `false`, the bridge
     /// inspects the scan report itself and decides what to do.
@@ -107,6 +165,7 @@ impl PrincepsNodeConfig {
             oracle_params: OracleParams::hyperliquid_default(),
             vault_params: VaultParams::production_default(),
             funding_params: FundingParams::hyperliquid_default(),
+            circuit_breaker_params: CircuitBreakerParams::v0_default(),
             run_adl_on_unfilled_deficit: true,
         }
     }
@@ -161,6 +220,12 @@ pub struct CoordinatorSnapshot {
     /// on-disk coordinator snapshots deserialize as `None`.
     #[serde(default)]
     pub cached_oracle_price: Option<AggregatedPrice>,
+    /// Active oracle circuit-breaker halt, if any. Restoring this
+    /// prevents an attacker from re-running an oracle attack across
+    /// a node restart that would otherwise clear `oracle_halt_until`.
+    /// `#[serde(default)]` so older snapshots deserialize as `None`.
+    #[serde(default)]
+    pub oracle_halt_until: Option<u64>,
 }
 
 /// Per-tick output — aggregated reports plus a snapshot of post-tick
@@ -194,6 +259,13 @@ pub struct TickReport {
     /// applying the settlements to account balances is the clearing
     /// layer's job and lands in a later stage.
     pub funding: Option<FundingTick>,
+    /// `Some(until)` if the per-block oracle deviation guard tripped
+    /// this tick. The breaker stays armed through `block_height ≤ until`;
+    /// downstream lending bad-debt absorption should skip its run while
+    /// any halt is active. `None` if no trip occurred this tick.
+    ///
+    /// Threat-model row O-3.
+    pub circuit_breaker_tripped_until: Option<u64>,
 }
 
 /// The integration coordinator. One [`PrincepsNode`] per deployed
@@ -206,6 +278,12 @@ pub struct PrincepsNode {
     vault: VaultState,
     funding_clock: FundingClock,
     last_oracle_refresh_at: Option<u64>,
+    /// `Some(block)` if the oracle circuit breaker has tripped and the
+    /// halt window has not yet elapsed. `None` if the breaker has
+    /// never tripped or the window has fully expired. The lending
+    /// bad-debt loop in `bin/princeps` consults this via
+    /// [`PrincepsNode::is_oracle_halted`].
+    oracle_halt_until: Option<u64>,
 }
 
 impl PrincepsNode {
@@ -226,6 +304,7 @@ impl PrincepsNode {
             vault,
             funding_clock,
             last_oracle_refresh_at: None,
+            oracle_halt_until: None,
         }
     }
 
@@ -244,6 +323,7 @@ impl PrincepsNode {
             vault,
             funding_clock,
             last_oracle_refresh_at: None,
+            oracle_halt_until: None,
         }
     }
 
@@ -359,8 +439,21 @@ impl PrincepsNode {
     /// Conflating the two would let a stale oracle delay
     /// otherwise-required liquidations.
     pub fn tick(&mut self, input: TickInput<'_>) -> TickReport {
-        // 1. Oracle refresh — only if the interval has elapsed.
+        // 1a. Capture the prior cached oracle price *before* refresh so
+        //     the circuit-breaker comparison sees the pre-refresh value.
+        let prior_index = self.oracle.current_price();
+
+        // 1b. Oracle refresh — only if the interval has elapsed.
         let oracle_result = self.maybe_refresh_oracle(input.block_time);
+
+        // 1c. Circuit-breaker check — fires when a successful refresh
+        //     moves the aggregated price by more than the configured
+        //     deviation cap relative to the prior cached price.
+        let circuit_breaker_tripped_this_tick = self.evaluate_circuit_breaker(
+            prior_index,
+            oracle_result.as_ref().and_then(|r| r.as_ref().ok()).copied(),
+            input.block_height,
+        );
 
         // 2. Liquidation scan against the CLOB-derived mark.
         let scan = self.scanner.scan(input.account_snapshots, input.mark);
@@ -407,7 +500,77 @@ impl PrincepsNode {
             vault_total_assets: self.vault.total_assets().0,
             vault_share_price_bps: self.vault.share_price_bps(),
             funding,
+            circuit_breaker_tripped_until: if circuit_breaker_tripped_this_tick {
+                self.oracle_halt_until
+            } else {
+                None
+            },
         }
+    }
+
+    /// Returns `true` if the oracle circuit breaker is currently armed
+    /// — i.e., it tripped at some prior tick and `block_height` is
+    /// still within the halt window. Lending bad-debt absorption (and
+    /// any other code path that should not act on a suspect oracle)
+    /// consults this before running.
+    #[must_use]
+    pub fn is_oracle_halted(&self, block_height: u64) -> bool {
+        self.oracle_halt_until
+            .is_some_and(|until| block_height <= until)
+    }
+
+    /// Block height at which the current halt expires, if any.
+    /// Useful for telemetry / RPC. Returns `None` when no halt is armed.
+    #[must_use]
+    pub const fn oracle_halt_until(&self) -> Option<u64> {
+        self.oracle_halt_until
+    }
+
+    /// Internal: evaluate this tick's deviation between `prior_index`
+    /// (pre-refresh cached) and the freshly-aggregated `new_price`. If
+    /// the deviation exceeds `circuit_breaker_params.max_per_block_deviation_bps`,
+    /// re-arm `oracle_halt_until` to `block_height + halt_duration_blocks`
+    /// (taking max with any existing halt). Returns whether the breaker
+    /// tripped on this tick.
+    ///
+    /// Returns `false` (no trip) when:
+    /// - no refresh happened this tick (`new_price` is `None`)
+    /// - no prior price exists to compare against (first observation)
+    /// - the refresh produced an error (already a halt signal upstream)
+    /// - the deviation guard is disabled (`max_per_block_deviation_bps == 0`)
+    /// - the actual deviation is within the cap
+    fn evaluate_circuit_breaker(
+        &mut self,
+        prior_index: Option<IndexPrice>,
+        new_price: Option<AggregatedPrice>,
+        block_height: u64,
+    ) -> bool {
+        let params = self.config.circuit_breaker_params;
+        if params.max_per_block_deviation_bps == 0 {
+            return false;
+        }
+        let (Some(prior), Some(fresh)) = (prior_index, new_price) else {
+            return false;
+        };
+        if prior.0 == 0 {
+            // No meaningful denominator; treat as first observation.
+            return false;
+        }
+        let new_index = fresh.index.0;
+        let prior_index_value = prior.0;
+        let abs_delta = new_index.abs_diff(prior_index_value);
+        // u128 intermediate to avoid overflow on large prices.
+        let bps =
+            u128::from(abs_delta).saturating_mul(10_000) / u128::from(prior_index_value);
+        if bps <= u128::from(params.max_per_block_deviation_bps) {
+            return false;
+        }
+        let new_until = block_height.saturating_add(params.halt_duration_blocks);
+        self.oracle_halt_until = Some(match self.oracle_halt_until {
+            Some(existing) => existing.max(new_until),
+            None => new_until,
+        });
+        true
     }
 
     /// Capture the load-bearing fields for cross-restart resume
@@ -430,6 +593,7 @@ impl PrincepsNode {
             last_oracle_refresh_at: self.last_oracle_refresh_at,
             funding_last_settled_at: self.funding_clock.last_settled_at(),
             cached_oracle_price: self.oracle.current(),
+            oracle_halt_until: self.oracle_halt_until,
         }
     }
 
@@ -453,6 +617,7 @@ impl PrincepsNode {
             snap.funding_last_settled_at,
         );
         self.last_oracle_refresh_at = snap.last_oracle_refresh_at;
+        self.oracle_halt_until = snap.oracle_halt_until;
         if let Some(price) = snap.cached_oracle_price {
             self.oracle.restore_current(price);
         }
@@ -802,5 +967,131 @@ mod tests {
         let outcome = node.absorb_lending_bad_debt(0);
         assert!(matches!(outcome, WithdrawOutcome::Covered { amount: 0 }));
         assert_eq!(node.scanner().fund_balance(), 500);
+    }
+
+    // ─── circuit breaker: deviation guard ──────────────────────────
+
+    fn agg(index: u64, computed_at: u64) -> AggregatedPrice {
+        AggregatedPrice {
+            index: IndexPrice(index),
+            computed_at,
+            feeds_used: 2,
+        }
+    }
+
+    #[test]
+    fn circuit_breaker_disabled_never_trips() {
+        let mut node = default_node();
+        let prior = Some(IndexPrice(100));
+        let fresh = Some(agg(1_000_000, 0)); // 10000% move — would normally trip
+        // Override config to disabled params.
+        node.config.circuit_breaker_params = CircuitBreakerParams::disabled();
+        let tripped = node.evaluate_circuit_breaker(prior, fresh, 100);
+        assert!(!tripped);
+        assert_eq!(node.oracle_halt_until, None);
+        assert!(!node.is_oracle_halted(100));
+    }
+
+    #[test]
+    fn circuit_breaker_no_prior_price_does_not_trip() {
+        let mut node = default_node();
+        let prior = None; // no cached price
+        let fresh = Some(agg(100, 0));
+        let tripped = node.evaluate_circuit_breaker(prior, fresh, 100);
+        assert!(!tripped);
+        assert_eq!(node.oracle_halt_until, None);
+    }
+
+    #[test]
+    fn circuit_breaker_failed_refresh_does_not_trip() {
+        let mut node = default_node();
+        let prior = Some(IndexPrice(100));
+        let fresh = None; // refresh did not produce a successful aggregation
+        let tripped = node.evaluate_circuit_breaker(prior, fresh, 100);
+        assert!(!tripped);
+        assert_eq!(node.oracle_halt_until, None);
+    }
+
+    #[test]
+    fn circuit_breaker_small_move_within_cap_does_not_trip() {
+        let mut node = default_node();
+        // hyperliquid_default cap is 2000 bps = 20%. 100 → 119 is 19%.
+        let prior = Some(IndexPrice(100));
+        let fresh = Some(agg(119, 0));
+        let tripped = node.evaluate_circuit_breaker(prior, fresh, 100);
+        assert!(!tripped);
+        assert_eq!(node.oracle_halt_until, None);
+    }
+
+    #[test]
+    fn circuit_breaker_large_move_trips_and_sets_halt() {
+        let mut node = default_node();
+        // 100 → 130 is 30%, above the default 20% cap.
+        let prior = Some(IndexPrice(100));
+        let fresh = Some(agg(130, 0));
+        let tripped = node.evaluate_circuit_breaker(prior, fresh, 1_000);
+        assert!(tripped);
+        assert_eq!(
+            node.oracle_halt_until,
+            Some(1_000 + CircuitBreakerParams::v0_default().halt_duration_blocks),
+        );
+        assert!(node.is_oracle_halted(1_000));
+        assert!(node.is_oracle_halted(1_050));
+        assert!(!node.is_oracle_halted(1_051));
+    }
+
+    #[test]
+    fn circuit_breaker_sustained_spike_extends_halt() {
+        let mut node = default_node();
+        let prior = Some(IndexPrice(100));
+        // First trip at block 1000.
+        node.evaluate_circuit_breaker(prior, Some(agg(130, 0)), 1_000);
+        let first_halt = node.oracle_halt_until.expect("first trip");
+        // Second trip at block 1010 (still within first halt window).
+        // Halt extends rather than expires mid-attack.
+        node.evaluate_circuit_breaker(Some(IndexPrice(130)), Some(agg(170, 0)), 1_010);
+        let second_halt = node.oracle_halt_until.expect("second trip");
+        assert!(second_halt > first_halt);
+    }
+
+    #[test]
+    fn circuit_breaker_downward_move_also_trips() {
+        let mut node = default_node();
+        // 100 → 70 is 30% down — must trip just like 30% up.
+        let prior = Some(IndexPrice(100));
+        let fresh = Some(agg(70, 0));
+        let tripped = node.evaluate_circuit_breaker(prior, fresh, 500);
+        assert!(tripped);
+        assert!(node.is_oracle_halted(500));
+    }
+
+    #[test]
+    fn circuit_breaker_zero_prior_does_not_trip() {
+        let mut node = default_node();
+        // Pathological prior=0 must not divide-by-zero / panic.
+        let prior = Some(IndexPrice(0));
+        let fresh = Some(agg(100, 0));
+        let tripped = node.evaluate_circuit_breaker(prior, fresh, 100);
+        assert!(!tripped);
+    }
+
+    #[test]
+    fn circuit_breaker_persists_across_snapshot_round_trip() {
+        let mut node = default_node();
+        node.evaluate_circuit_breaker(Some(IndexPrice(100)), Some(agg(130, 0)), 1_000);
+        let snap = node.snapshot();
+        assert_eq!(snap.oracle_halt_until, Some(1_050));
+
+        let bytes = serde_json::to_vec(&snap).expect("serialize");
+        let decoded: CoordinatorSnapshot =
+            serde_json::from_slice(&bytes).expect("deserialize");
+        assert_eq!(decoded.oracle_halt_until, Some(1_050));
+
+        let mut fresh = default_node();
+        assert!(!fresh.is_oracle_halted(1_000));
+        fresh.load_snapshot(decoded);
+        assert!(fresh.is_oracle_halted(1_000));
+        assert!(fresh.is_oracle_halted(1_050));
+        assert!(!fresh.is_oracle_halted(1_051));
     }
 }

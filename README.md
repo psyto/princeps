@@ -39,10 +39,13 @@ Three positions Princeps occupies that no existing project covers today:
 
 | Version | Scope | Target |
 |---|---|---|
-| **v0** | Lending — single asset pair (USDC collateral, ETH borrow), deterministic liquidations, portfolio margin | Q3 2026 |
-| **v1** | Options — orderbook, vol surface, Greeks precompiles, cross-margin with lending | Q4 2026 / Q1 2027 |
-| **v2** | Structured products — native vault composition, continuous NAV, Tempo settlement integration | Q2 2027 |
-| **v3** | Institutional rails — KYC overlay (per-tenant opt-in), fund-admin primitives, decentralized sequencer | H2 2027 |
+| **v0** | Lending — single asset pair (USDC collateral, ETH borrow), deterministic liquidations, portfolio margin | Q3 2026 testnet |
+| **Audit window** | ≥2 independent Web3 security audits of L1 kernel + lending precompiles; gates v1 mainnet, not v0 testnet | Q1 2027 |
+| **v1** | Options — orderbook, vol surface, Greeks precompiles, cross-margin with lending; lending mainnet ships here | Q2 2027 |
+| **v2** | Structured products — native vault composition, continuous NAV, Tempo settlement integration | Q3 2027 |
+| **v3** | Institutional rails — KYC overlay (per-tenant opt-in), fund-admin primitives, decentralized sequencer | H1 2028 |
+
+The audit row is load-bearing: per [ADR-008](./docs/adr/008-pre-token-validator-policy.md), the v0 → v1 transition is also the permissioned-validator-set → bonded-stake transition (ADR-009 forthcoming), and tokenomics design completion is a non-negotiable gate before any real money lands. v0 testnet itself can ship without an external audit because no real funds are at risk.
 
 ## Architectural decisions (locked)
 
@@ -57,6 +60,7 @@ Seven foundational decisions, locked for the platform lifecycle:
 | [005](./docs/adr/005-settlement-standalone-then-tempo.md) | Settlement: **standalone L1** v0–v1, Tempo settlement at v2 | |
 | [006](./docs/adr/006-identity-anon-default-kyc-overlay.md) | Identity: **anon-default**, KYC as Layer-3 per-tenant overlay at v3 | Not chain-wide KYC |
 | [007](./docs/adr/007-token-none-until-revenue.md) | Token: **none until real revenue** | Earliest consideration: post-v1 |
+| [008](./docs/adr/008-pre-token-validator-policy.md) | Pre-token validator policy: **permissioned + legally bound** until tokenomics ships | Sunsets with ADR-009 |
 
 ## Status
 

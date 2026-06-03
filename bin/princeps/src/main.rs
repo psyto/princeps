@@ -1405,30 +1405,54 @@ async fn run_reth_devnet(
                         lending_report.block,
                     );
                 }
-                // Stage 24a — hardcoded prices matching the seed
-                // genesis (USDC=1, ETH=1). v1 will read these from the
-                // oracle's published lending feeds once the oracle
-                // type → lending price-pair bridge lands. With the seed
-                // accounts all healthy at (1, 1), the unified scan no-ops
-                // here; raising ETH via an external mutation (e.g., the
-                // lending CLI's --eth-price) makes accounts 2–5 flag.
-                let mut lending_prices: std::collections::BTreeMap<
-                    princeps_lending::MarketId,
-                    (u128, u128),
-                > = std::collections::BTreeMap::new();
-                lending_prices.insert(princeps_lending::MarketId(0), (1, 1));
-                let perp_im_bps = node.config().liquidation_params.initial_margin_bps;
-                let unified = bridge_for_hook.scan_unified(mark, perp_im_bps, &lending_prices);
-                for (account, free) in &unified.flagged {
-                    let shortfall =
-                        bridge_for_hook.absorb_account_bad_debt(*account, mark, &lending_prices);
-                    if shortfall > 0 {
-                        let outcome = node
-                            .absorb_lending_bad_debt(i64::try_from(shortfall).unwrap_or(i64::MAX));
+
+                // Oracle circuit breaker (threat-model row O-3): if the
+                // per-block deviation guard tripped on the perp oracle,
+                // skip the unified scan + bad-debt absorption loop until
+                // the halt window expires. Acting on a suspect price
+                // would let an attacker trigger the very liquidations
+                // they are trying to extract value from. Interest
+                // accrual above remains safe (no price input).
+                if let Some(until) = report.circuit_breaker_tripped_until {
+                    println!(
+                        "  oracle circuit breaker TRIPPED at block {}; halted through block {}",
+                        height.0, until,
+                    );
+                }
+                if node.is_oracle_halted(height.0) {
+                    if let Some(until) = node.oracle_halt_until() {
                         println!(
-                            "  lending bad-debt: account {} free_equity={} shortfall={} fund_outcome={:?}",
-                            account.0, free, shortfall, outcome,
+                            "  lending scan: skipped (oracle halt active, expires at block {})",
+                            until,
                         );
+                    }
+                } else {
+                    // Stage 24a — hardcoded prices matching the seed
+                    // genesis (USDC=1, ETH=1). v1 will read these from the
+                    // oracle's published lending feeds once the oracle
+                    // type → lending price-pair bridge lands. With the seed
+                    // accounts all healthy at (1, 1), the unified scan no-ops
+                    // here; raising ETH via an external mutation (e.g., the
+                    // lending CLI's --eth-price) makes accounts 2–5 flag.
+                    let mut lending_prices: std::collections::BTreeMap<
+                        princeps_lending::MarketId,
+                        (u128, u128),
+                    > = std::collections::BTreeMap::new();
+                    lending_prices.insert(princeps_lending::MarketId(0), (1, 1));
+                    let perp_im_bps = node.config().liquidation_params.initial_margin_bps;
+                    let unified = bridge_for_hook.scan_unified(mark, perp_im_bps, &lending_prices);
+                    for (account, free) in &unified.flagged {
+                        let shortfall = bridge_for_hook
+                            .absorb_account_bad_debt(*account, mark, &lending_prices);
+                        if shortfall > 0 {
+                            let outcome = node.absorb_lending_bad_debt(
+                                i64::try_from(shortfall).unwrap_or(i64::MAX),
+                            );
+                            println!(
+                                "  lending bad-debt: account {} free_equity={} shortfall={} fund_outcome={:?}",
+                                account.0, free, shortfall, outcome,
+                            );
+                        }
                     }
                 }
 
