@@ -10,7 +10,9 @@ Lending → options → structured products → institutional rails, on a single
 
 ## What it is
 
-Princeps is an open-source, Reth-based L1 designed to be the DeFi-native counterpart of a TradFi prime broker. Where Hyperliquid reinvented perps by embedding the matching engine into the L1, and Tempo reinvented payments by embedding FX and auto-swap, Princeps reinvents the primitives that perps don't cover:
+Princeps is an open-source, Reth-based L1 designed to be the DeFi-native counterpart of a TradFi prime broker. The kernel runs in two forms: as a public L1 deployment, and as an embeddable engine that third parties can lift into their own exchange or brokerage stack.
+
+Where Hyperliquid reinvented perps by embedding the matching engine into the L1, and Tempo reinvented payments by embedding FX and auto-swap, Princeps reinvents the primitives that perps don't cover:
 
 - **Lending** — deterministic sub-second liquidations as state transitions (not keeper auctions), portfolio margin, native flash loans
 - **Options** — Black-Scholes / IV surfaces / Greeks as precompiles, auto-exercise at expiry block, vol surface as canonical state
@@ -24,6 +26,14 @@ All four layers share one risk engine — so a strategy can sell a covered call,
 **The L1 that's everything HL isn't.** Princeps explicitly does not build perps; HL owns that. Princeps is the lending / options / structured-products / institutional-rails complement.
 
 One-line pitch: *"If HL is the on-chain CME, Princeps is the on-chain prime broker."*
+
+Three positions Princeps occupies that no existing project covers today:
+
+1. **A DeFi-native unified prime brokerage engine, open-source.** Commercial peers (Talos, Trumid, GFO-X) are closed-source institutional platforms; existing OSS matching engines cover only fragments. Princeps ships the first OSS reference of a unified cross-product risk engine — lending, perps, options, and structured products in one tree, callable via EVM precompiles. The kernel is reusable: third parties can embed the crates into their own exchange or prime brokerage stack.
+
+2. **Lending + options + structured products on one L1 with a shared risk engine.** Today these live in separate protocols across separate chains (Aave + Deribit + Pendle, or Drift + Derive + Sommelier). The prime broker thesis — atomic composability across products with one health number — has no L1-native incumbent. *Caveat: if HyperEVM matures into a native multi-product DeFi layer, this position narrows.*
+
+3. **A Reth-based L1 specialized for DeFi trading.** Tempo is Reth-based but payments-focused; Optimism, Base, and other Reth-using L2s are general-purpose. A Reth L1 purpose-built around the trading risk engine — funding, oracle, liquidation, cross-margin as state transitions — is, in practice, Princeps alone.
 
 ## Roadmap
 
@@ -215,9 +225,11 @@ By the same author, separate independent projects worth knowing about:
 
 Apache 2.0 — see [LICENSE](./LICENSE).
 
-## Contributing
+## Contributing & embedding
 
-Princeps is currently a solo build. External contribution model will be defined post-v0 ship.
+Princeps is currently a solo build; external contribution model will be defined post-v0 ship.
+
+The kernel is designed to be embeddable. The pure state machines — `types`, `codec`, `clob`, `funding`, `liquidation`, `oracle`, `vault`, `lending`, `portfolio` — have no I/O and can be lifted into any execution environment (a third-party L1, a CEX matching engine, a prime broker risk system). The I/O crates (`evm`, `consensus`, `node`) are the public L1 deployment; downstream users can replace them with their own integration layer. Apache 2.0 throughout.
 
 ## Contact
 
