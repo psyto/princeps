@@ -1,5 +1,8 @@
 # Princeps
 
+> **Active development moved to [psyto/rdk](https://github.com/psyto/rdk) (2026-06-03).**
+> This repo is preserved as the public landing page for the [2026-06-01 launch announcement](docs/announcements/2026-06-01-launch.md) and the v0 lending demos referenced therein. The Princeps codebase now lives in the [rdk monorepo](https://github.com/psyto/rdk) under `princeps/` (alongside the OpenHL ancestor and the shared `rdk-*` DeFi L1 primitives both apps consume).
+
 **The DeFi prime broker L1 on Reth.**
 
 Lending → options → structured products → institutional rails, on a single shared risk engine.
