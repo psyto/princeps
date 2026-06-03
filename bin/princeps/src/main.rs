@@ -1363,6 +1363,46 @@ async fn run_reth_devnet(
                 println!("  mark = {} ({mark_source})", mark.0);
                 print_tick_report(&report);
 
+                // Per-block lending integration: accrue interest on every
+                // registered market, scan portfolio-wide for underwater
+                // accounts (perp + lending unified), and route any
+                // shortfall into the coordinator's insurance fund.
+                //
+                // v0 reth-devnet has no lending markets configured at
+                // genesis — Stage 24a's chain-spec will add USDC/ETH —
+                // so the scan-and-absorb branches no-op for now. Wiring
+                // them here closes the correctness gap that lending
+                // interest never accrues in the running node (previously
+                // `lending_tick` was only invoked from tests), and the
+                // unified-scan loop will start firing the moment markets
+                // exist without further integration changes.
+                let lending_report = bridge_for_hook.lending_tick(height.0);
+                if !lending_report.interest_reports.is_empty() {
+                    println!(
+                        "  lending tick: {} market(s) accrued interest at block {}",
+                        lending_report.interest_reports.len(),
+                        lending_report.block,
+                    );
+                }
+                let lending_prices: std::collections::BTreeMap<
+                    princeps_lending::MarketId,
+                    (u128, u128),
+                > = std::collections::BTreeMap::new();
+                let perp_im_bps = node.config().liquidation_params.initial_margin_bps;
+                let unified = bridge_for_hook.scan_unified(mark, perp_im_bps, &lending_prices);
+                for (account, free) in &unified.flagged {
+                    let shortfall =
+                        bridge_for_hook.absorb_account_bad_debt(*account, mark, &lending_prices);
+                    if shortfall > 0 {
+                        let outcome = node
+                            .absorb_lending_bad_debt(i64::try_from(shortfall).unwrap_or(i64::MAX));
+                        println!(
+                            "  lending bad-debt: account {} free_equity={} shortfall={} fund_outcome={:?}",
+                            account.0, free, shortfall, outcome,
+                        );
+                    }
+                }
+
                 // Stage 15b → 16c: apply funding settlements back to
                 // the bridge-owned account map. The bridge is the
                 // sole source of truth for per-account state — every
